@@ -145,9 +145,10 @@ class TokenManager:
         return self.token
 
     def get_token(self):
-        if self.token:
-            return self.token
-        else:
-            return None
+        # 토큰이 없거나 만료되었으면 새로 발급
+        if not self.token or self.is_expired():
+            print("[TokenManager] 토큰을 새로 발급받습니다.")
+            self.fetch_token()
+        return self.token
 
 
