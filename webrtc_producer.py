@@ -4,6 +4,7 @@ import time
 import logging
 import json
 import av
+import os
 from multiprocessing import Queue
 from go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
 from go2_webrtc_connect.go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD
@@ -12,7 +13,6 @@ from go2_webrtc_connect.go2_webrtc_driver.util import TokenManager
 
 
 # 디버깅 
-import os
 from pathlib import Path
 print("=== 환경 디버깅 ===")
 print(f"현재 작업 디렉터리: {os.getcwd()}")
@@ -38,6 +38,7 @@ _conn_holder = {}
 # 최신 조이스틱 값만 저장 (sitdown/situp 등은 큐 사용)
 latest_joystick = None
 robot_state = "unknown"  # 초기 상태는 unknown
+latest_bms_state = None  # BMS 상태 저장용
 
 def start_webrtc(frame_queue, command_queue):
     # av.logging.set_level(av.logging.ERROR) 
@@ -51,6 +52,27 @@ def start_webrtc(frame_queue, command_queue):
                 frame_queue.put(img)
             except Exception as e:
                 logging.error(f"Frame decode error: {e}")
+
+    # BMS 상태를 수신하는 콜백 함수 수정
+    def lowstate_callback(message):
+        global latest_bms_state
+        try:
+            current_message = message['data']
+            latest_bms_state = current_message['bms_state']
+            print(f"[BMS 업데이트] SOC: {latest_bms_state['soc']}%, 전류: {latest_bms_state['current']}mA")
+            
+            # 파일로 BMS 상태 저장
+            bms_file = os.path.join(os.getcwd(), '.bms_state.json')
+            with open(bms_file, 'w') as f:
+                json.dump({
+                    'timestamp': time.time(),
+                    'bms_state': latest_bms_state,
+                    'robot_state': robot_state,
+                    'connection_status': 'connected'
+                }, f)
+                
+        except Exception as e:
+            print(f"[BMS] 상태 파싱 오류: {e}")
 
     async def _ensure_normal_mode(conn):
         try:
@@ -146,6 +168,7 @@ def start_webrtc(frame_queue, command_queue):
             await asyncio.sleep(0.1)  # 50ms마다 최신 값 전송
 
     async def main_webrtc():
+        global _conn_holder
         token_manager = TokenManager()
         token = token_manager.get_token()
         conn = Go2WebRTCConnection(
@@ -154,12 +177,22 @@ def start_webrtc(frame_queue, command_queue):
             username=UNITREE_USERNAME,
             password=UNITREE_PASSWORD
         )
+        
+        # 연결 저장
+        _conn_holder['conn'] = conn
+        
         # 이후에도 토큰이 만료될 수 있으니, 필요시 token_manager.get_token()으로 갱신
         await conn.connect()
         conn.video.switchVideoChannel(True)
         conn.video.add_track_callback(recv_camera_stream)
+        
+        # BMS 상태 구독 추가
+        print("[BMS] LOW_STATE 구독 시작...")
+        conn.datachannel.pub_sub.subscribe(RTC_TOPIC['LOW_STATE'], lowstate_callback)
+        
         await _ensure_normal_mode(conn)
         asyncio.create_task(handle_command(conn))
+        
         # 루프가 살아있도록 대기
         while True:
             await asyncio.sleep(1)
@@ -169,6 +202,65 @@ def start_webrtc(frame_queue, command_queue):
         asyncio.run(main_webrtc())
 
     threading.Thread(target=run_loop, daemon=True).start()
+
+# BMS 상태를 외부에서 가져오는 함수들 추가
+def get_bms_state():
+    """현재 BMS 상태를 파일에서 읽어서 반환"""
+    try:
+        bms_file = os.path.join(os.getcwd(), '.bms_state.json')
+        if os.path.exists(bms_file):
+            with open(bms_file, 'r') as f:
+                data = json.load(f)
+                # 5분 이내 데이터만 유효
+                if time.time() - data['timestamp'] < 300:
+                    return data['bms_state']
+        return None
+    except Exception as e:
+        print(f"BMS 상태 파일 읽기 오류: {e}")
+        return None
+
+def get_robot_status():
+    """로봇의 전체 상태를 파일에서 읽어서 반환"""
+    try:
+        bms_file = os.path.join(os.getcwd(), '.bms_state.json')
+        if os.path.exists(bms_file):
+            with open(bms_file, 'r') as f:
+                data = json.load(f)
+                # 5분 이내 데이터만 유효
+                if time.time() - data['timestamp'] < 300:
+                    return {
+                        'robot_state': data.get('robot_state', 'unknown'),
+                        'bms_state': data.get('bms_state'),
+                        'connection_status': data.get('connection_status', 'disconnected')
+                    }
+        return {
+            'robot_state': 'unknown',
+            'bms_state': None,
+            'connection_status': 'disconnected'
+        }
+    except Exception as e:
+        print(f"로봇 상태 파일 읽기 오류: {e}")
+        return {
+            'robot_state': 'unknown',
+            'bms_state': None,
+            'connection_status': 'disconnected'
+        }
+
+
+async def get_robot_bms_status():
+    """Discord 봇에서 사용할 BMS 상태 가져오기 (비동기)"""
+    # 연결이 되어 있다면 최신 BMS 상태 반환
+    if latest_bms_state is not None:
+        return latest_bms_state
+    
+    # 연결이 안되어 있거나 BMS 데이터가 없다면 잠시 대기
+    max_wait = 10  # 최대 10초 대기
+    for _ in range(max_wait):
+        await asyncio.sleep(1)
+        if latest_bms_state is not None:
+            return latest_bms_state
+    
+    return None
 
 # 외부에서 명령을 큐에 넣는 함수
 def send_command(command_queue, direction):
