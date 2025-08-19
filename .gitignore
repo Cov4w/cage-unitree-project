@@ -9,3 +9,4 @@ __pycache__/
 .DS_Store
 
 .unitree_token
+.bms_state.json
