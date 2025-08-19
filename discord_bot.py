@@ -21,17 +21,15 @@ FIRE_ALERT_CHANNELS = [
         'channel_id': 989834859063148564,    # 첫 번째 채널 ID
         'role_id': 1407168354208186478,      # 첫 번째 역할 ID
         'server_name': '메인 서버'
-    }
-]
-''',
+    },
     {
-        'channel_id': 1234567890123456789,   # 두 번째 채널 ID (다른 서버)
-        'role_id': 9876543210987654321,      # 두 번째 역할 ID
+        'channel_id': 1407178115347644456,   # 두 번째 채널 ID (다른 서버)
+        'role_id': 1407168743104188517,      # 두 번째 역할 ID
         'server_name': '백업 서버'
     }, 
     # 필요에 따라 더 추가 가능
 ]
-'''
+
 @bot.event
 async def on_ready():
     print(f'{bot.user}로 로그인했습니다!')
@@ -54,7 +52,7 @@ async def on_message(message):
 @bot.command(name='hello')
 async def hello(ctx):
     """인사 명령어"""
-    await ctx.send(f'안녕하세요, {ctx.author.mention}님!')
+    await ctx.send(f'안녕하세요, {ctx.author.mention}님! Unitree 상황 알림 봇입니다!')
 
 @bot.command(name='ping')
 async def ping(ctx):
@@ -107,11 +105,6 @@ async def bot_info(ctx):
             embed.add_field(
                 name="🌡️ MCU 온도", 
                 value=f"{bms_state['mcu_ntc']}°C", 
-                inline=True
-            )
-            embed.add_field(
-                name="🤖 로봇 상태", 
-                value=robot_status['robot_state'], 
                 inline=True
             )
             
@@ -183,7 +176,7 @@ async def battery_status(ctx):
             inline=False
         )
         embed.add_field(name="전류", value=f"{bms_state['current']} mA", inline=True)
-        embed.add_field(name="사이클", value=f"{bms_state['cycle']}회", inline=True)
+        # embed.add_field(name="사이클", value=f"{bms_state['cycle']}회", inline=True)
         embed.add_field(name="BQ 온도", value=f"{bms_state['bq_ntc']}°C", inline=True)
         embed.add_field(name="MCU 온도", value=f"{bms_state['mcu_ntc']}°C", inline=True)
         
