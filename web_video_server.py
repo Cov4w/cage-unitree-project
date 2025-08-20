@@ -157,7 +157,7 @@ def generate():
                     if confidence >= FIRE_CONFIDENCE_THRESHOLD and fire_continuous_detection:
                         if int(time.time() * 2) % 2:  # 깜빡임 효과
                             color = (0, 255, 255)  # 노란색
-                        display_text = f"🚨 FIRE {confidence:.2f}"
+                        display_text = f"FIRE {confidence:.2f}"
                         
                 elif label == "person":
                     color = (0, 255, 0)      # 초록색 (BGR)
@@ -171,7 +171,7 @@ def generate():
             # 🔥 연속 감지 상태 표시
             if fire_continuous_detection and fire_detection_start_time:
                 detection_duration = time.time() - fire_detection_start_time
-                status_text = f"🔥 Fire 감지중: {detection_duration:.1f}s"
+                status_text = f"Fire detecting..: {detection_duration:.1f}s"
                 
                 if detection_duration >= FIRE_DETECTION_THRESHOLD:
                     status_color = (0, 0, 255)  # 빨간색
@@ -179,7 +179,7 @@ def generate():
                         # 알림 준비 중일 때 상태 표시
                         elapsed_alert_time = time.time() - fire_last_alert_time
                         if elapsed_alert_time < FIRE_ALERT_INTERVAL:
-                            status_text += f" - 알림 준비중 ({elapsed_alert_time:.1f}s)"
+                            status_text += f" ready for alarm ({elapsed_alert_time:.1f}s)"
                 else:
                     status_color = (0, 165, 255)  # 주황색
                 
