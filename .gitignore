@@ -13,3 +13,4 @@ __pycache__/
 .qr_encryption_key
 users_database.json
 qr_codes
+aruco_identities.json

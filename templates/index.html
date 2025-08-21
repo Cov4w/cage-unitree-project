@@ -2,28 +2,206 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>WebRTC Video Stream</title>
+    <title>Unitree 제어 시스템</title>
     <style>
-        #control-panel { display: none; margin-top: 20px; }
-        #joystick-zone { width: 200px; height: 200px; margin: 0 auto; }
-        .action-btn { width: 120px; font-size: 1em; margin: 10px; }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .video-section {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .video-stream {
+            border: 2px solid #ddd;
+            border-radius: 10px;
+            max-width: 100%;
+            height: auto;
+        }
+        
+        .control-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        
+        .control-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        
+        .btn-primary { background-color: #007bff; color: white; }
+        .btn-primary:hover { background-color: #0056b3; }
+        
+        .btn-success { background-color: #28a745; color: white; }
+        .btn-success:hover { background-color: #1e7e34; }
+        
+        .btn-danger { background-color: #dc3545; color: white; }
+        .btn-danger:hover { background-color: #c82333; }
+        
+        .btn-warning { background-color: #ffc107; color: black; }
+        .btn-warning:hover { background-color: #e0a800; }
+        
+        .btn-info { background-color: #17a2b8; color: white; }
+        .btn-info:hover { background-color: #138496; }
+        
+        #control-panel { 
+            display: none; 
+            margin-top: 20px; 
+        }
+        
+        #joystick-zone { 
+            width: 200px; 
+            height: 200px; 
+            margin: 20px auto;
+            border: 2px solid #ddd;
+            border-radius: 50%;
+            background-color: #f8f9fa;
+        }
+        
+        .action-buttons {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .action-btn { 
+            width: 120px; 
+            font-size: 1em; 
+            margin: 10px; 
+        }
+        
+        .status-display {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-family: monospace;
+        }
+        
+        .log-area {
+            background-color: #212529;
+            color: #ffffff;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        
+        .status-on { background-color: #28a745; }
+        .status-off { background-color: #dc3545; }
+        .status-scanning { background-color: #ffc107; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.9.0/dist/nipplejs.min.js"></script>
 </head>
 <body>
-    <h2>실시간 비디오 스트림</h2>
-    <img src="{{ url_for('video_feed') }}" width="640" height="360" />
+    <div class="container">
+        <h1>🤖 Unitree 제어 시스템</h1>
+        
+        <!-- 비디오 스트림 섹션 -->
+        <div class="video-section">
+            <h2>📹 실시간 비디오 스트림</h2>
+            <img src="{{ url_for('video_feed') }}" class="video-stream" width="640" height="360" />
+        </div>
 
-    <br>
-    <button id="slam-btn">START CONTROL</button>
-    <button id="exit-btn" style="display:none;">EXIT</button>
+        <!-- 시스템 시작 버튼 -->
+        <div class="control-section">
+            <h3>🚀 시스템 제어</h3>
+            <button id="slam-btn" class="btn btn-primary">START CONTROL</button>
+            <button id="exit-btn" class="btn btn-danger" style="display:none;">EXIT</button>
+        </div>
 
-    <div id="control-panel">
-        <div id="joystick-zone"></div>
-        <div style="margin-top:20px;">
-            <button class="action-btn" onclick="move('sitdown')">SIT DOWN</button>
-            <button class="action-btn" onclick="move('situp')">STAND UP</button>
-            <button class="action-btn" onclick="move('sit')">SIT</button>
+        <!-- 🆕 ArUco 신원 확인 시스템 -->
+        <div class="control-section">
+            <h3>🔖 ArUco 신원 확인 시스템</h3>
+            <p style="margin: 5px 0; color: #666;">
+                📋 <strong>프로세스:</strong> SIT 버튼 → YOLO 비활성화 → ArUco 마커 스캔 → 신원 확인 → Discord 알림
+            </p>
+            <div class="status-display" id="aruco-status">
+                <span class="status-indicator status-off"></span>
+                <strong>ArUco 스캔:</strong> <span id="aruco-status-text">대기 중</span>
+            </div>
+            <button onclick="startArUcoScan()" class="btn btn-success">
+                🔖 ArUco 신원 스캔 시작
+            </button>
+            <button onclick="stopArUcoScan()" class="btn btn-danger">
+                🛑 ArUco 스캔 중지
+            </button>
+            <button onclick="checkArUcoStatus()" class="btn btn-info">
+                📊 ArUco 상태 확인
+            </button>
+        </div>
+
+        <!-- 메인 제어 패널 -->
+        <div id="control-panel">
+            <!-- 조이스틱 제어 -->
+            <div class="control-section">
+                <h3>🕹️ 조이스틱 제어</h3>
+                <div id="joystick-zone"></div>
+                <p style="text-align: center; color: #666;">
+                    조이스틱을 드래그하여 로봇을 움직이세요
+                </p>
+            </div>
+
+            <!-- 기본 동작 버튼들 -->
+            <div class="control-section">
+                <h3>🤖 기본 동작</h3>
+                <div class="action-buttons">
+                    <button class="action-btn btn btn-warning" onclick="move('sitdown')">SIT DOWN</button>
+                    <button class="action-btn btn btn-success" onclick="move('situp')">STAND UP</button>
+                    <button class="action-btn btn btn-info" onclick="move('sit')">SIT</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 시스템 상태 및 로그 -->
+        <div class="control-section">
+            <h3>📊 시스템 상태</h3>
+            <div class="status-display" id="system-status">
+                <span class="status-indicator status-off"></span>
+                <strong>YOLO:</strong> <span id="yolo-status">활성화</span> | 
+                <strong>ArUco:</strong> <span id="aruco-mode">대기</span> | 
+                <strong>연결:</strong> <span id="connection-status">준비</span>
+            </div>
+            
+            <h4>📝 실시간 로그</h4>
+            <div class="log-area" id="log-area">
+                시스템 로그가 여기에 표시됩니다...
+            </div>
+            <button onclick="clearLog()" class="btn btn-warning" style="margin-top: 10px;">🗑️ 로그 지우기</button>
         </div>
     </div>
 
@@ -32,35 +210,181 @@
         let current = {x: 0, z: 0};
         let sending = false;
         let intervalId = null;
+        let statusMonitorId = null;
 
+        // 로그 함수
+        function addLog(message) {
+            const logArea = document.getElementById('log-area');
+            const timestamp = new Date().toLocaleTimeString();
+            logArea.innerHTML += `[${timestamp}] ${message}\n`;
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log-area').innerHTML = '로그가 지워졌습니다...\n';
+        }
+
+        // 시스템 시작
         document.getElementById('slam-btn').onclick = function() {
             fetch('/start_control', {method: 'POST'})
                 .then(res => res.json())
                 .then(data => {
-                    document.getElementById('control-panel').style.display = 'block';
-                    document.getElementById('slam-btn').style.display = 'none';
-                    document.getElementById('exit-btn').style.display = 'inline-block';
-                    if (!joystick) {
-                        createJoystick();
+                    if (data.status === 'ok') {
+                        document.getElementById('control-panel').style.display = 'block';
+                        document.getElementById('slam-btn').style.display = 'none';
+                        document.getElementById('exit-btn').style.display = 'inline-block';
+                        addLog('🚀 제어 시스템이 시작되었습니다.');
+                        
+                        if (!joystick) {
+                            createJoystick();
+                        }
+                        startStatusMonitoring();
+                    } else {
+                        addLog('❌ 제어 시스템 시작 실패');
                     }
+                })
+                .catch(error => {
+                    addLog('❌ 통신 오류: ' + error);
                 });
         };
 
+        // 시스템 종료
         document.getElementById('exit-btn').onclick = function() {
             document.getElementById('control-panel').style.display = 'none';
             document.getElementById('slam-btn').style.display = 'inline-block';
             document.getElementById('exit-btn').style.display = 'none';
             stopSending();
+            stopStatusMonitoring();
+            addLog('🛑 제어 시스템이 종료되었습니다.');
         };
 
+        // 기본 동작 함수
         function move(direction) {
             fetch('/move', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ direction: direction })
+            })
+            .then(res => res.json())
+            .then(data => {
+                addLog(`🤖 동작 명령: ${direction}`);
+            })
+            .catch(error => {
+                addLog('❌ 동작 명령 실패: ' + error);
             });
         }
 
+        // 🆕 ArUco 신원 스캔 시스템 함수들
+        function startArUcoScan() {
+            fetch('/start_aruco_scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    addLog(`🔖 ArUco 신원 스캔 시작!`);
+                    addLog(`📋 최대 ${data.max_attempts}번 시도, ${data.timeout}초 타임아웃`);
+                    addLog(`🎯 YOLO 모델 비활성화됨`);
+                    updateArUcoStatus('scanning', 'ArUco 스캔 중...');
+                    startStatusMonitoring();
+                } else {
+                    addLog('❌ ArUco 스캔 시작 실패: ' + data.message);
+                }
+            })
+            .catch(error => {
+                addLog('❌ ArUco 스캔 통신 오류');
+            });
+        }
+
+        function stopArUcoScan() {
+            fetch('/stop_aruco_scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    addLog(`🛑 ArUco 스캔 중지됨! (${data.attempts_made}번 시도함)`);
+                    addLog(`🔄 YOLO 모델 재활성화됨`);
+                    updateArUcoStatus('off', '대기 중');
+                } else {
+                    addLog('❌ ArUco 스캔 중지 실패: ' + data.message);
+                }
+            })
+            .catch(error => {
+                addLog('❌ ArUco 스캔 중지 통신 오류');
+            });
+        }
+
+        function checkArUcoStatus() {
+            fetch('/aruco_scan_status')
+            .then(response => response.json())
+            .then(data => {
+                addLog(`📊 ArUco 상태:`);
+                addLog(`   스캔 모드: ${data.aruco_scan_mode ? 'ON' : 'OFF'}`);
+                addLog(`   시도 횟수: ${data.aruco_scan_attempts}/${data.max_attempts}`);
+                addLog(`   남은 시간: ${data.remaining_time.toFixed(1)}초`);
+                addLog(`   YOLO 활성화: ${data.yolo_active ? 'ON' : 'OFF'}`);
+            })
+            .catch(error => {
+                addLog('❌ 상태 확인 실패');
+            });
+        }
+
+        function updateArUcoStatus(status, text) {
+            const indicator = document.querySelector('#aruco-status .status-indicator');
+            const statusText = document.getElementById('aruco-status-text');
+            
+            indicator.className = 'status-indicator';
+            if (status === 'scanning') {
+                indicator.classList.add('status-scanning');
+            } else if (status === 'on') {
+                indicator.classList.add('status-on');
+            } else {
+                indicator.classList.add('status-off');
+            }
+            
+            statusText.textContent = text;
+        }
+
+        // 상태 모니터링
+        function startStatusMonitoring() {
+            if (statusMonitorId) return;
+            
+            statusMonitorId = setInterval(() => {
+                fetch('/aruco_scan_status')
+                .then(response => response.json())
+                .then(data => {
+                    // YOLO 상태 업데이트
+                    document.getElementById('yolo-status').textContent = data.yolo_active ? '활성화' : '비활성화';
+                    
+                    // ArUco 모드 업데이트
+                    if (data.aruco_scan_mode) {
+                        document.getElementById('aruco-mode').textContent = `스캔 중 (${data.aruco_scan_attempts}/${data.max_attempts})`;
+                        updateArUcoStatus('scanning', `스캔 중... ${data.aruco_scan_attempts}/${data.max_attempts}`);
+                    } else {
+                        document.getElementById('aruco-mode').textContent = '대기';
+                        updateArUcoStatus('off', '대기 중');
+                    }
+                    
+                    // 연결 상태
+                    document.getElementById('connection-status').textContent = '연결됨';
+                })
+                .catch(error => {
+                    document.getElementById('connection-status').textContent = '연결 오류';
+                });
+            }, 2000); // 2초마다 상태 확인
+        }
+
+        function stopStatusMonitoring() {
+            if (statusMonitorId) {
+                clearInterval(statusMonitorId);
+                statusMonitorId = null;
+            }
+        }
+
+        // 조이스틱 생성
         function createJoystick() {
             joystick = nipplejs.create({
                 zone: document.getElementById('joystick-zone'),
@@ -93,6 +417,7 @@
             });
         }
 
+        // 조이스틱 전송
         function startSending() {
             sending = true;
             if (intervalId) return;
@@ -116,6 +441,12 @@
                 body: JSON.stringify({ x: x, z: z })
             });
         }
+
+        // 페이지 로드 시 초기화
+        window.onload = function() {
+            addLog('🌟 시스템이 준비되었습니다.');
+            addLog('📋 START CONTROL을 눌러 시작하세요.');
+        };
     </script>
 </body>
 </html>
