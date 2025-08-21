@@ -1,82 +1,207 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
     <meta charset="UTF-8">
-    <title>WebRTC Video Stream</title>
+    <title>GO2 Robot Control & LiDAR Visualization</title>
     <style>
-        #control-panel { display: none; margin-top: 20px; }
-        #joystick-zone { width: 200px; height: 200px; margin: 0 auto; }
-        .action-btn { width: 120px; font-size: 1em; margin: 10px; }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f8f8f8;
+        }
+
+        /* Grid 레이아웃 */
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 3fr 2fr;
+            height: 100vh;
+            gap: 5px;
+        }
+
+        /* 좌측/우측 상단 비디오 영역 */
+        .video {
+            border: 1px solid #000;
+            background: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 200px;
+        }
+
+        .video img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* 좌측 하단: 조이스틱 + 동작 버튼 */
+        .joystick-area {
+            grid-column: 1 / 2;
+            grid-row: 2 / 3;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin-top: 50px;
+            gap: 10px;
+            padding: 10px;
+
+        }
+
+        #joystick-zone {
+            margin-top: 40px;
+            width: 150px;
+            height: 150px;
+        }
+
+        .button-row {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .button-row button {
+            padding: 10px;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            background: #ccc;
+        }
+
+        .button-row button:hover {
+            background: #aaa;
+        }
+
+        /* 우측 하단: 제어 버튼 + LiDAR 상태 */
+        .control-area {
+            grid-column: 2 / 3;
+            grid-row: 2 / 3;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: #fff;
+            gap: 10px;
+            padding: 10px;
+        }
+
+        .control-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 10px;
+            width: 250px;
+        }
+
+        .control-buttons button {
+            width: 100%;
+            height: 50px;
+            background: #ccc;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .control-buttons button:hover {
+            background: #aaa;
+        }
+
+        .lidar-info {
+            font-size: 12px;
+            color: #555;
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        /* LiDAR/Map toggle tabs */
+        .tab-btn {
+            padding: 5px 12px;
+            margin-right: 5px;
+            border: 1px solid #ddd;
+            background: #f0f0f0;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .tab-btn.active {
+            background: #007bff;
+            color: white;
+        }
+
+        #lidar-container {
+            width: 100%;
+            height: 100%;
+            background: #000;
+            border: 1px solid #ddd;
+        }
     </style>
+
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.9.0/dist/nipplejs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
+
 <body>
-    <h2>실시간 비디오 스트림</h2>
-    <img src="{{ url_for('video_feed') }}" width="640" height="360" />
 
-    <br>
-    <button id="slam-btn">START CONTROL</button>
-    <button id="exit-btn" style="display:none;">EXIT</button>
+    <div class="container">
+        <!-- 좌측 상단: 실시간 비디오 -->
+        <div class="video">
+            <img id="video-stream" src="{{ url_for('video_feed') }}?mode=go2" />
+        </div>
 
-    <div id="control-panel">
-        <div id="joystick-zone"></div>
-        <div style="margin-top:20px;">
-            <button class="action-btn" onclick="move('sitdown')">SIT DOWN</button>
-            <button class="action-btn" onclick="move('situp')">STAND UP</button>
+        <!-- 우측 상단: LiDAR 화면 -->
+        <div class="video" id="right-video">
+            <div id="lidar-container"></div>
+        </div>
+
+        <!-- 좌측 하단: 조이스틱 + 동작 버튼 -->
+        <div class="joystick-area">
+            <div id="joystick-zone"></div>
+            <div class="button-row">
+                <a href="/logout"
+                    style="padding:10px;font-weight:bold;cursor:pointer;border:none;background:#ccc;text-decoration:none;display:inline-block;text-align:center;">로그아웃</a>
+                <button id="exit-btn">EXIT</button>
+                <button onclick="move('situp')">STAND UP</button>
+                <button onclick="move('sitdown')">SIT DOWN</button>
+            </div>
+        </div>
+
+        <!-- 우측 하단: 제어 버튼 + LiDAR 상태 -->
+        <div class="control-area">
+            <div class="control-buttons">
+                <button class="tab-btn active" onclick="showLidarView(event)">LiDAR View</button>
+                <button class="tab-btn" onclick="showMapView(event)">Map View</button>
+                <button onclick="toggleLidar('on')">LIDAR ON</button>
+                <button onclick="toggleLidar('off')">LIDAR OFF</button>
+            </div>
+            <div class="lidar-info">
+                Points: <span id="point-count">0</span><br>
+                Status: <span id="lidar-status">대기중</span>
+            </div>
         </div>
     </div>
 
     <script>
+        // =================== 조이스틱 ===================
         let joystick = null;
-        let current = {x: 0, z: 0};
+        let current = { x: 0, z: 0 };
         let sending = false;
         let intervalId = null;
-
-        document.getElementById('slam-btn').onclick = function() {
-            fetch('/start_control', {method: 'POST'})
-                .then(res => res.json())
-                .then(data => {
-                    document.getElementById('control-panel').style.display = 'block';
-                    document.getElementById('slam-btn').style.display = 'none';
-                    document.getElementById('exit-btn').style.display = 'inline-block';
-                    if (!joystick) {
-                        createJoystick();
-                    }
-                });
-        };
-
-        document.getElementById('exit-btn').onclick = function() {
-            document.getElementById('control-panel').style.display = 'none';
-            document.getElementById('slam-btn').style.display = 'inline-block';
-            document.getElementById('exit-btn').style.display = 'none';
-            stopSending();
-        };
-
-        function move(direction) {
-            fetch('/move', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ direction: direction })
-            });
-        }
 
         function createJoystick() {
             joystick = nipplejs.create({
                 zone: document.getElementById('joystick-zone'),
                 mode: 'static',
-                position: { left: '50%', top: '50%' },
                 color: 'blue',
                 size: 150
             });
 
-            joystick.on('move', function(evt, data) {
+            joystick.on('move', (evt, data) => {
                 if (data && data.distance > 10) {
-                    let rad = data.angle.radian;
-                    // y축(세로) → x(전후), x축(가로) → z(회전)
-                    let x = Math.sin(rad) * (data.distance / 100); // -1 ~ 1 (전후)
-                    let z = Math.cos(rad) * (data.distance / -75); // -1 ~ 1 (회전)
-                    current.x = x;
-                    current.z = z;
+                    const rad = data.angle.radian;
+                    current.x = Math.sin(rad) * (data.distance / 100);
+                    current.z = Math.cos(rad) * (data.distance / -75);
                 } else {
                     current.x = 0;
                     current.z = 0;
@@ -84,7 +209,7 @@
                 if (!sending) startSending();
             });
 
-            joystick.on('end', function() {
+            joystick.on('end', () => {
                 current.x = 0;
                 current.z = 0;
                 sendJoy(0, 0);
@@ -92,12 +217,26 @@
             });
         }
 
+        createJoystick();
+
+        function move(direction) {
+            fetch('/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ direction })
+            });
+        }
+
+        document.getElementById('exit-btn').onclick = function () {
+            stopSending();
+            fetch('/exit', { method: 'POST' });
+            toggleLidar('off');
+        };
+
         function startSending() {
             sending = true;
             if (intervalId) return;
-            intervalId = setInterval(() => {
-                sendJoy(current.x, current.z);
-            }, 50); // 50ms마다 전송
+            intervalId = setInterval(() => sendJoy(current.x, current.z), 50);
         }
 
         function stopSending() {
@@ -112,9 +251,135 @@
             fetch('/joystick', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ x: x, z: z })
+                body: JSON.stringify({ x, z })
             });
         }
+
+        // =================== LiDAR ===================
+        let scene, camera, renderer, pointCloud;
+        let lidarGeometry, lidarMaterial;
+        let lidarUpdateInterval = null;
+        let isLidarActive = false;
+
+        function initLidarVisualization() {
+            const container = document.getElementById('lidar-container');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+
+            camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+            camera.position.set(0, 5, 10);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            container.appendChild(renderer.domElement);
+
+            const axesHelper = new THREE.AxesHelper(5);
+            scene.add(axesHelper);
+
+            const gridHelper = new THREE.GridHelper(20, 20);
+            scene.add(gridHelper);
+
+            lidarGeometry = new THREE.BufferGeometry();
+            lidarMaterial = new THREE.PointsMaterial({
+                color: 0x00ff00,
+                size: 0.1,
+                vertexColors: true
+            });
+
+            pointCloud = new THREE.Points(lidarGeometry, lidarMaterial);
+            scene.add(pointCloud);
+
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        function updateLidarData(data) {
+            if (!data || !data.positions || data.positions.length === 0) return;
+
+            const positions = new Float32Array(data.positions);
+            const colors = new Float32Array(positions.length);
+
+            for (let i = 0; i < positions.length; i += 3) {
+                const height = positions[i + 2];
+                const normH = Math.max(0, Math.min(1, (height + 2) / 4));
+                colors[i] = normH;
+                colors[i + 1] = 1 - normH;
+                colors[i + 2] = 0.5;
+            }
+
+            lidarGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            lidarGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            lidarGeometry.attributes.position.needsUpdate = true;
+            lidarGeometry.attributes.color.needsUpdate = true;
+
+            document.getElementById('point-count').textContent = data.point_count || 0;
+            document.getElementById('lidar-status').textContent = '수신중';
+        }
+
+        function fetchLidarData() {
+            if (!isLidarActive) return;
+            fetch('/lidar_data')
+                .then(res => res.json())
+                .then(data => { if (data.point_count > 0) updateLidarData(data); })
+                .catch(() => { document.getElementById('lidar-status').textContent = '연결 오류'; });
+        }
+
+        function toggleLidar(state) {
+            fetch('/toggle_lidar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ state })
+            }).then(() => {
+                if (state === 'on') {
+                    isLidarActive = true;
+                    if (!lidarUpdateInterval) lidarUpdateInterval = setInterval(fetchLidarData, 100);
+                    document.getElementById('lidar-status').textContent = '활성화됨';
+                } else {
+                    isLidarActive = false;
+                    if (lidarUpdateInterval) { clearInterval(lidarUpdateInterval); lidarUpdateInterval = null; }
+                    document.getElementById('lidar-status').textContent = '비활성화됨';
+                }
+            });
+        }
+
+        // =================== 탭 전환 ===================
+        function showLidarView(e) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            e.target.classList.add('active');
+            document.getElementById('lidar-container').style.display = 'block';
+            document.getElementById('right-video').innerHTML = '';
+            document.getElementById('right-video').appendChild(document.getElementById('lidar-container'));
+        }
+
+        function showMapView(e) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            e.target.classList.add('active');
+            document.getElementById('lidar-container').style.display = 'none';
+            document.getElementById('right-video').innerHTML = '<img src="/map_feed" width="100%" height="100%">';
+        }
+
+        window.addEventListener('load', initLidarVisualization);
+
+        window.addEventListener('resize', () => {
+            if (camera && renderer) {
+                const container = document.getElementById('lidar-container');
+                const width = container.clientWidth;
+                const height = container.clientHeight;
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+                renderer.setSize(width, height);
+            }
+        });
     </script>
+
 </body>
+
 </html>

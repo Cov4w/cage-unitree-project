@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>로그인</title>
+    <style>
+        body {
+            background: #222;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .login-container {
+            background: #333;
+            padding: 40px 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            min-width: 300px;
+        }
+        .login-container h2 {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .login-container input {
+            margin-bottom: 15px;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        .login-container button {
+            padding: 10px;
+            background: #4caf50;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .login-container button:hover {
+            background: #388e3c;
+        }
+        .error-message {
+            color: #ff5252;
+            margin-bottom: 10px;
+            text-align: center;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- ...existing code... -->
+<form class="login-container" method="POST" action="/login">
+    <h2>로그인</h2>
+    {% if error %}
+    <div id="error" class="error-message" style="display:block;">아이디 또는 비밀번호가 올바르지 않습니다.</div>
+    {% else %}
+    <div id="error" class="error-message">아이디 또는 비밀번호가 올바르지 않습니다.</div>
+    {% endif %}
+    <input type="text" name="username" placeholder="아이디" required>
+    <input type="password" name="password" placeholder="비밀번호" required>
+    <button type="submit">로그인</button>
+</form>
+<!-- ...existing code... -->
+    <script>
+        function handleLogin(event) {
+            event.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorDiv = document.getElementById('error');
+            if (username === 'admin' && password === 'admin') {
+                window.location.href = "index.html";
+            } else {
+                errorDiv.style.display = 'block';
+            }
+            return false;
+        }
+    </script>
+</body>
+</html>
