@@ -11,7 +11,7 @@
         }
         
         .container {
-            max-width: 1200px;
+            max-width: 1400px; /* 가로 레이아웃을 위해 더 넓게 */
             margin: 0 auto;
             background-color: white;
             padding: 20px;
@@ -19,9 +19,24 @@
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
         
+        /* 🆕 가로 배치를 위한 메인 컨테이너 */
+        .main-layout {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        
+        /* 🆕 비디오 섹션 스타일 수정 */
         .video-section {
             text-align: center;
             margin-bottom: 30px;
+            transition: all 0.3s ease; /* 부드러운 전환 */
+        }
+        
+        .video-section.expanded {
+            /* START CONTROL 후 비디오가 왼쪽으로 이동 */
+            flex: 0 0 600px; /* 고정 너비 */
+            margin-bottom: 0;
         }
         
         .video-stream {
@@ -31,9 +46,33 @@
             height: auto;
         }
         
+        /* 🆕 제어 패널이 오른쪽에 표시될 영역 */
+        .control-sidebar {
+            flex: 1;
+            min-width: 300px;
+            display: none; /* 초기에는 숨김 */
+        }
+        
+        .control-sidebar.active {
+            display: block;
+            animation: slideInRight 0.3s ease-out; /* 슬라이드 애니메이션 */
+        }
+        
+        /* 🆕 슬라이드 애니메이션 */
+        @keyframes slideInRight {
+            from {
+                opacity: 0;
+                transform: translateX(50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
         .control-section {
             margin: 20px 0;
-            padding: 15px;
+            padding: 10px;
             border: 1px solid #ddd;
             border-radius: 8px;
             background-color: #f9f9f9;
@@ -69,18 +108,33 @@
         .btn-info { background-color: #17a2b8; color: white; }
         .btn-info:hover { background-color: #138496; }
         
-        #control-panel { 
-            display: none; 
-            margin-top: 20px; 
-        }
-        
+        /* 🔧 조이스틱 영역 개선된 스타일 */
         #joystick-zone { 
             width: 200px; 
             height: 200px; 
             margin: 20px auto;
-            border: 2px solid #ddd;
+            border: 3px solid #007bff;
             border-radius: 50%;
-            background-color: #f8f9fa;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            position: relative;
+            overflow: visible;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        /* 🔧 조이스틱 호버 효과 */
+        #joystick-zone:hover {
+            border-color: #0056b3;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.15), 0 0 15px rgba(0,123,255,0.4);
+            transform: scale(1.02);
+        }
+        
+        /* 🔧 조이스틱 활성화 상태 */
+        #joystick-zone.active {
+            border-color: #28a745;
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.15), 0 0 20px rgba(40,167,69,0.5);
         }
         
         .action-buttons {
@@ -124,6 +178,42 @@
         .status-on { background-color: #28a745; }
         .status-off { background-color: #dc3545; }
         .status-scanning { background-color: #ffc107; }
+        
+        /* 🆕 전체 폭 사용하는 섹션들 */
+        .full-width-section {
+            width: 98%;
+            margin: 20px 0;
+        }
+        
+        /* 🆕 반응형 디자인 */
+        @media (max-width: 1200px) {
+            .main-layout {
+                flex-direction: column;
+            }
+            
+            .video-section.expanded {
+                flex: none;
+            }
+            
+            .control-sidebar {
+                min-width: auto;
+            }
+        }
+        
+        /* 🔧 반응형 조이스틱 */
+        @media (max-width: 768px) {
+            #joystick-zone {
+                width: 160px;
+                height: 160px;
+            }
+        }
+        
+        @media (min-width: 1400px) {
+            #joystick-zone {
+                width: 240px;
+                height: 240px;
+            }
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.9.0/dist/nipplejs.min.js"></script>
 </head>
@@ -131,21 +221,15 @@
     <div class="container">
         <h1>🤖 Unitree 제어 시스템</h1>
         
-        <!-- 비디오 스트림 섹션 -->
-        <div class="video-section">
-            <h2>📹 실시간 비디오 스트림</h2>
-            <img src="{{ url_for('video_feed') }}" class="video-stream" width="640" height="360" />
-        </div>
-
-        <!-- 시스템 시작 버튼 -->
-        <div class="control-section">
+        <!-- 시스템 시작 버튼 (전체 폭) -->
+        <div class="control-section full-width-section">
             <h3>🚀 시스템 제어</h3>
             <button id="slam-btn" class="btn btn-primary">START CONTROL</button>
             <button id="exit-btn" class="btn btn-danger" style="display:none;">EXIT</button>
         </div>
 
-        <!-- 🆕 ArUco 신원 확인 시스템 -->
-        <div class="control-section">
+        <!-- ArUco 신원 확인 시스템 (전체 폭) -->
+        <div class="control-section full-width-section">
             <h3>🔖 ArUco 신원 확인 시스템</h3>
             <p style="margin: 5px 0; color: #666;">
                 📋 <strong>프로세스:</strong> SIT 버튼 → YOLO 비활성화 → ArUco 마커 스캔 → 신원 확인 → Discord 알림
@@ -165,30 +249,39 @@
             </button>
         </div>
 
-        <!-- 메인 제어 패널 -->
-        <div id="control-panel">
-            <!-- 조이스틱 제어 -->
-            <div class="control-section">
-                <h3>🕹️ 조이스틱 제어</h3>
-                <div id="joystick-zone"></div>
-                <p style="text-align: center; color: #666;">
-                    조이스틱을 드래그하여 로봇을 움직이세요
-                </p>
+        <!-- 🆕 메인 레이아웃: 비디오 + 제어 패널 -->
+        <div class="main-layout">
+            <!-- 비디오 스트림 섹션 -->
+            <div class="video-section" id="video-section">
+                <h2>📹 실시간 비디오 스트림</h2>
+                <img src="{{ url_for('video_feed') }}" class="video-stream" width="640" height="360" />
             </div>
 
-            <!-- 기본 동작 버튼들 -->
-            <div class="control-section">
-                <h3>🤖 기본 동작</h3>
-                <div class="action-buttons">
-                    <button class="action-btn btn btn-warning" onclick="move('sitdown')">SIT DOWN</button>
-                    <button class="action-btn btn btn-success" onclick="move('situp')">STAND UP</button>
-                    <button class="action-btn btn btn-info" onclick="move('sit')">SIT</button>
+            <!-- 🆕 제어 사이드바 (START CONTROL 후에 표시) -->
+            <div class="control-sidebar" id="control-sidebar">
+                <!-- 조이스틱 제어 -->
+                <div class="control-section">
+                    <h3>🕹️ 조이스틱 제어</h3>
+                    <div id="joystick-zone"></div>
+                    <p style="text-align: center; color: #666; font-size: 0.9em;">
+                        조이스틱을 드래그하여 로봇을 움직이세요
+                    </p>
+                </div>
+
+                <!-- 기본 동작 버튼들 -->
+                <div class="control-section">
+                    <h3>🤖 기본 동작</h3>
+                    <div class="action-buttons">
+                        <button class="action-btn btn btn-warning" onclick="move('sitdown')">SIT DOWN</button>
+                        <button class="action-btn btn btn-success" onclick="move('situp')">STAND UP</button>
+                        <button class="action-btn btn btn-info" onclick="move('sit')">SIT</button>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- 시스템 상태 및 로그 -->
-        <div class="control-section">
+        <!-- 시스템 상태 및 로그 (전체 폭) -->
+        <div class="control-section full-width-section">
             <h3>📊 시스템 상태</h3>
             <div class="status-display" id="system-status">
                 <span class="status-indicator status-off"></span>
@@ -224,19 +317,26 @@
             document.getElementById('log-area').innerHTML = '로그가 지워졌습니다...\n';
         }
 
-        // 시스템 시작
+        // 🔧 시스템 시작 (레이아웃 변경 포함)
         document.getElementById('slam-btn').onclick = function() {
             fetch('/start_control', {method: 'POST'})
                 .then(res => res.json())
                 .then(data => {
                     if (data.status === 'ok') {
-                        document.getElementById('control-panel').style.display = 'block';
+                        // 🆕 레이아웃 변경 - 비디오를 왼쪽으로, 제어패널을 오른쪽으로
+                        document.getElementById('video-section').classList.add('expanded');
+                        document.getElementById('control-sidebar').classList.add('active');
+                        
+                        // 버튼 상태 변경
                         document.getElementById('slam-btn').style.display = 'none';
                         document.getElementById('exit-btn').style.display = 'inline-block';
-                        addLog('🚀 제어 시스템이 시작되었습니다.');
                         
+                        addLog('🚀 제어 시스템이 시작되었습니다.');
+                        addLog('🔄 레이아웃이 가로 배치로 변경되었습니다.');
+                        
+                        // 🔧 조이스틱 생성 (레이아웃 변경 후)
                         if (!joystick) {
-                            createJoystick();
+                            setTimeout(createJoystick, 300); // 레이아웃 변경 완료 대기
                         }
                         startStatusMonitoring();
                     } else {
@@ -248,17 +348,30 @@
                 });
         };
 
-        // 시스템 종료
+        // 🔧 시스템 종료 (레이아웃 복원 포함)
         document.getElementById('exit-btn').onclick = function() {
-            document.getElementById('control-panel').style.display = 'none';
+            // 🆕 레이아웃 복원 - 원래 세로 배치로
+            document.getElementById('video-section').classList.remove('expanded');
+            document.getElementById('control-sidebar').classList.remove('active');
+            
+            // 버튼 상태 변경
             document.getElementById('slam-btn').style.display = 'inline-block';
             document.getElementById('exit-btn').style.display = 'none';
+            
             stopSending();
             stopStatusMonitoring();
+            
+            // 조이스틱 제거
+            if (joystick) {
+                joystick.destroy();
+                joystick = null;
+            }
+            
             addLog('🛑 제어 시스템이 종료되었습니다.');
+            addLog('🔄 레이아웃이 원래대로 복원되었습니다.');
         };
 
-        // 기본 동작 함수
+        // 기본 동작 함수 (기존 유지)
         function move(direction) {
             fetch('/move', {
                 method: 'POST',
@@ -274,7 +387,7 @@
             });
         }
 
-        // 🆕 ArUco 신원 스캔 시스템 함수들
+        // ArUco 함수들 (기존 유지)
         function startArUcoScan() {
             fetch('/start_aruco_scan', {
                 method: 'POST',
@@ -348,7 +461,7 @@
             statusText.textContent = text;
         }
 
-        // 상태 모니터링
+        // 상태 모니터링 (기존 유지)
         function startStatusMonitoring() {
             if (statusMonitorId) return;
             
@@ -384,46 +497,90 @@
             }
         }
 
-        // 조이스틱 생성
+        // 🔧 조이스틱 생성 함수 (기존 로직 유지)
         function createJoystick() {
-            joystick = nipplejs.create({
-                zone: document.getElementById('joystick-zone'),
-                mode: 'static',
-                position: { left: '50%', top: '50%' },
-                color: 'blue',
-                size: 150
-            });
+            console.log('🕹️ 조이스틱 생성 시작...');
+            
+            const joystickZone = document.getElementById('joystick-zone');
+            if (!joystickZone) {
+                console.error('❌ joystick-zone 요소를 찾을 수 없습니다.');
+                addLog('❌ 조이스틱 영역을 찾을 수 없습니다.');
+                return;
+            }
 
-            joystick.on('move', function(evt, data) {
-                if (data && data.distance > 10) {
-                    let rad = data.angle.radian;
-                    // y축(세로) → x(전후), x축(가로) → z(회전)
-                    let x = Math.sin(rad) * (data.distance / 100); // -1 ~ 1 (전후)
-                    let z = Math.cos(rad) * (data.distance / -75); // -1 ~ 1 (회전)
-                    current.x = x;
-                    current.z = z;
-                } else {
-                    current.x = 0;
-                    current.z = 0;
+            // 기존 조이스틱이 있다면 제거
+            if (joystick) {
+                try {
+                    joystick.destroy();
+                } catch (e) {
+                    console.warn('⚠️ 조이스틱 제거 중 경고:', e);
                 }
-                if (!sending) startSending();
-            });
+                joystick = null;
+            }
 
-            joystick.on('end', function() {
-                current.x = 0;
-                current.z = 0;
-                sendJoy(0, 0);
-                stopSending();
-            });
+            // 🔧 레이아웃 변경 완료 대기
+            setTimeout(() => {
+                try {
+                    // 🔧 joystick-zone 크기 측정
+                    const zoneRect = joystickZone.getBoundingClientRect();
+                    const zoneSize = Math.min(zoneRect.width, zoneRect.height);
+                    const joystickSize = Math.floor(zoneSize * 0.7); // zone의 80%
+                    
+                    console.log(`🎯 조이스틱 크기: ${joystickSize}px`);
+
+                    // 🔧 nipplejs 조이스틱 생성 (기존 설정 유지)
+                    joystick = nipplejs.create({
+                        zone: joystickZone,
+                        mode: 'static',
+                        position: { left: '50%', top: '50%' },
+                        color: 'blue',
+                        size: joystickSize > 0 ? joystickSize : 150 // 기본값 150
+                    });
+
+                    // 🔧 기존 이벤트 핸들러 완전히 유지
+                    joystick.on('move', function(evt, data) {
+                        if (data && data.distance > 10) {
+                            let rad = data.angle.radian;
+                            let x = Math.sin(rad) * (data.distance / 100);
+                            let z = Math.cos(rad) * (data.distance / -75);
+                            current.x = x;
+                            current.z = z;
+                        } else {
+                            current.x = 0;
+                            current.z = 0;
+                        }
+                        if (!sending) startSending();
+                    });
+
+                    joystick.on('end', function() {
+                        current.x = 0;
+                        current.z = 0;
+                        sendJoy(0, 0);
+                        stopSending();
+                        joystickZone.classList.remove('active');
+                    });
+
+                    joystick.on('start', function() {
+                        joystickZone.classList.add('active');
+                    });
+                    
+                    addLog(`✅ 조이스틱 생성 완료`);
+                    console.log('🎉 조이스틱 생성 완료');
+                    
+                } catch (error) {
+                    console.error('❌ 조이스틱 생성 실패:', error);
+                    addLog('❌ 조이스틱 생성 실패: ' + error.message);
+                }
+            }, 300);
         }
 
-        // 조이스틱 전송
+        // 🔧 기존 전송 함수들 완전히 유지
         function startSending() {
             sending = true;
             if (intervalId) return;
             intervalId = setInterval(() => {
                 sendJoy(current.x, current.z);
-            }, 50); // 50ms마다 전송
+            }, 25);
         }
 
         function stopSending() {
