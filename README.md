@@ -19,7 +19,8 @@
 
 ## 의존성 설치
 [설치 방법](https://github.com/Cov4w/cage-unitree-project/blob/main/readme2.md)
-
+## webRTC 오픈소스
+[오픈소스 출처](https://github.com/legion1581/go2_webrtc_connect)
 
 <div>
   <h2>
@@ -64,3 +65,15 @@
 <div id = "audio">
   <h2>실시간 양방향 음성 대화 기능</h2>
 </div>
+
+## 📝 버전 기록
+<div id = "vhis_0.1.0">
+  <h3>
+    v 0.1.0 <br> 제작 기간 2025/06/13 ~ 2025/8/11 <br> dmc 코넷 아이디어 콘테스트
+  </h3>
+</div>
+
+- webRTC를 이용해 로봇 원격 제어 구현
+- 웹 페이지 상 조이스틱을 이용해 움직임 제어
+- 로봇 동작 id를 사용해 특정 행동 제어
+- coco 데이터셋 기반 yolov11n을 이용해 실시간 객체 판별 기능 테스트
