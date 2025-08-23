@@ -7,3 +7,5 @@ __pycache__/
 # Ignore .DS_Store files
 # 맥 OS에서만 생성 및 사용되는 파일
 .DS_Store
+
+.unitree_token

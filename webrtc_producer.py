@@ -8,6 +8,7 @@ from multiprocessing import Queue
 from go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
 from go2_webrtc_connect.go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD
 from aiortc import MediaStreamTrack
+from go2_webrtc_connect.go2_webrtc_driver.util import TokenManager
 
 
 # 디버깅 
@@ -36,6 +37,7 @@ _conn_holder = {}
 
 # 최신 조이스틱 값만 저장 (sitdown/situp 등은 큐 사용)
 latest_joystick = None
+robot_state = "unknown"  # 초기 상태는 unknown
 
 def start_webrtc(frame_queue, command_queue):
     # av.logging.set_level(av.logging.ERROR) 
@@ -81,7 +83,7 @@ def start_webrtc(frame_queue, command_queue):
             print(f"[모드 확인] 에러 발생: {e}")
 
     async def handle_command(conn):
-        global latest_joystick
+        global latest_joystick, robot_state
         while True:
             # sitdown/situp 등은 큐에서 처리
             if not command_queue.empty():
@@ -92,6 +94,7 @@ def start_webrtc(frame_queue, command_queue):
                         RTC_TOPIC["SPORT_MOD"],
                         {"api_id": SPORT_CMD["StandDown"]}
                     )
+                    robot_state = "sitdown"
                 elif direction == "situp":
                     print("Performing 'StandUp' movement...")
                     await conn.datachannel.pub_sub.publish_request_new(
@@ -103,6 +106,60 @@ def start_webrtc(frame_queue, command_queue):
                         RTC_TOPIC["SPORT_MOD"],
                         {"api_id": SPORT_CMD["BalanceStand"]}
                     )
+                    robot_state = "situp"
+                elif direction == "sit":
+                    if robot_state == "situp":
+                        print("Performing 'Sit' movement...")
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["Sit"]}
+                        )
+                        robot_state = "sit"
+                    else:
+                        print("Not situp, switching to situp first...")
+                        # StandUp → BalanceStand → SitUp → Sit
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["StandUp"]}
+                        )
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["BalanceStand"]}
+                        )
+                        robot_state = "situp"
+                        print("Performing 'Sit' movement...")
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["Sit"]}
+                        )
+                        robot_state = "sit"
+                elif direction == "hello":
+                    if robot_state == "hello":
+                        print("Performing 'Hello' movement...")
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["Hello"]}
+                        )
+                        robot_state = "hello"
+                    else:
+                        print("Not situp, switching to situp first...")
+                        # StandUp → BalanceStand → SitUp → Sit
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["StandUp"]}
+                        )
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["BalanceStand"]}
+                        )
+                        robot_state = "hello"
+                        print("Performing 'Hello' movement...")
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["Hello"]}
+                        )
+                        robot_state = "hello"
+                        
                 # 기타 명령은 필요시 추가
             # 최신 조이스틱 값만 사용
             if latest_joystick is not None:
@@ -116,12 +173,15 @@ def start_webrtc(frame_queue, command_queue):
             await asyncio.sleep(0.1)  # 50ms마다 최신 값 전송
 
     async def main_webrtc():
+        token_manager = TokenManager()
+        token = token_manager.get_token()
         conn = Go2WebRTCConnection(
             WebRTCConnectionMethod.Remote,
             serialNumber=SERIAL_NUMBER,
             username=UNITREE_USERNAME,
             password=UNITREE_PASSWORD
         )
+        # 이후에도 토큰이 만료될 수 있으니, 필요시 token_manager.get_token()으로 갱신
         await conn.connect()
         conn.video.switchVideoChannel(True)
         conn.video.add_track_callback(recv_camera_stream)
