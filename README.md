@@ -1,16 +1,6 @@
 # TEAM - CAGE
-<div>
-  <h2>
-    🛠️ Unitree Go2 Patrol Project
-  </h2>
-</div>
-
-<div>
-  <h2>
-    📎 팀원
-  </h2>
-</div>
-
+## 🛠️ Unitree Go2 Patrol Project
+## 📎 팀원
 - [김태민 (나사렛대학교)](https://github.com/gomtam/) - 팀장, ROS2 환경 구축, SLAM/NAVI 연구
 - [이수 (우송대학교)](https://github.com/2siuuuu/) - 개발환경 구축, webRTC 기반 구축
 - [김한솔 (우송대학교)](https://github.com/one1212/) - UI/UX 디자인 담당
