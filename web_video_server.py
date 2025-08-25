@@ -668,6 +668,113 @@ def aruco_scan_status():
         'retry_interval': ARUCO_RETRY_INTERVAL
     })
 
+# 🆕 간소화된 Discord 음성 연동 관련 엔드포인트들
+
+@app.route('/voice_connect', methods=['POST'])
+def voice_connect():
+    """Discord 음성 채널 연결 & 자동 브리지 시작"""
+    try:
+        voice_command = {
+            'command': 'voice_connect',  # 연결과 동시에 브리지 시작
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        with open('.voice_command.json', 'w') as f:
+            json.dump(voice_command, f)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Discord 음성 채널 연결 및 브리지 시작 요청됨'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'음성 채널 연결 실패: {str(e)}'
+        })
+
+@app.route('/voice_disconnect', methods=['POST'])
+def voice_disconnect():
+    """Discord 음성 브리지 중지 & 채널 퇴장"""
+    try:
+        voice_command = {
+            'command': 'voice_disconnect',  # 브리지 중지와 동시에 퇴장
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        with open('.voice_command.json', 'w') as f:
+            json.dump(voice_command, f)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Discord 음성 브리지 중지 및 퇴장 요청됨'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'음성 채널 연결 해제 실패: {str(e)}'
+        })
+
+# voice_status 엔드포인트는 기존과 동일하게 유지
+@app.route('/voice_status')
+def voice_status():
+    """음성 연동 상태 확인"""
+    try:
+        if os.path.exists('.voice_status.json'):
+            with open('.voice_status.json', 'r') as f:
+                status = json.load(f)
+            return jsonify(status)
+        else:
+            return jsonify({
+                'voice_connected': False,
+                'bridge_active': False,
+                'last_activity': None
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'voice_connected': False,
+            'bridge_active': False,
+            'error': str(e)
+        })
+
+def get_connection_status():
+    """현재 WebRTC 연결 상태 반환"""
+    try:
+        if _conn_holder and 'conn' in _conn_holder and _conn_holder['conn']:
+            conn = _conn_holder['conn']
+            
+            # 연결 상태 확인
+            status = {
+                'connected': True,
+                'has_datachannel': hasattr(conn, 'datachannel') and conn.datachannel is not None,
+                'has_video': hasattr(conn, 'video') and conn.video is not None,
+                'has_audio': hasattr(conn, 'audio') and conn.audio is not None,
+                'connection_time': getattr(conn, '_connection_time', 'Unknown')
+            }
+            
+            return status
+        else:
+            return {
+                'connected': False,
+                'has_datachannel': False,
+                'has_video': False, 
+                'has_audio': False,
+                'connection_time': None
+            }
+    except Exception as e:
+        print(f"❌ 연결 상태 확인 오류: {e}")
+        return {
+            'connected': False,
+            'error': str(e)
+        }
+
+def is_connection_ready_for_audio():
+    """오디오 브리지를 위한 연결 준비 상태 확인"""
+    status = get_connection_status()
+    return status.get('connected', False) and status.get('has_datachannel', False)
+
 if __name__ == "__main__":
     print("🚀 Unitree 웹 비디오 서버 시작!")
     

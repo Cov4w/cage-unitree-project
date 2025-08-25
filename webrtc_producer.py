@@ -181,17 +181,72 @@ def start_webrtc(frame_queue, command_queue):
         # 연결 저장
         _conn_holder['conn'] = conn
         
-        # 이후에도 토큰이 만료될 수 있으니, 필요시 token_manager.get_token()으로 갱신
+        # 연결 수행
         await conn.connect()
-        conn.video.switchVideoChannel(True)
-        conn.video.add_track_callback(recv_camera_stream)
         
-        # BMS 상태 구독 추가
-        print("[BMS] LOW_STATE 구독 시작...")
-        conn.datachannel.pub_sub.subscribe(RTC_TOPIC['LOW_STATE'], lowstate_callback)
+        # 🔧 연결 후 채널 상태 확인 및 초기화
+        print("🔍 WebRTC 연결 후 채널 상태 확인...")
+        
+        # 비디오 채널 활성화
+        if hasattr(conn, 'video') and conn.video:
+            conn.video.switchVideoChannel(True)
+            conn.video.add_track_callback(recv_camera_stream)
+            print("✅ 비디오 채널 활성화됨")
+        else:
+            print("❌ 비디오 채널 없음")
+        
+        # 🆕 오디오 채널 확인 및 활성화 시도
+        if hasattr(conn, 'audio') and conn.audio:
+            try:
+                # 오디오 채널 활성화 시도
+                if hasattr(conn.audio, 'switchAudioChannel'):
+                    conn.audio.switchAudioChannel(True)
+                    print("✅ 오디오 채널 활성화됨")
+                else:
+                    print("⚠️ 오디오 채널에 switchAudioChannel 메서드 없음")
+            except Exception as e:
+                print(f"⚠️ 오디오 채널 활성화 실패: {e}")
+        else:
+            print("❌ 오디오 채널 없음")
+        
+        # 🆕 데이터채널 확인
+        if hasattr(conn, 'datachannel') and conn.datachannel:
+            print("✅ 데이터채널 확인됨")
+            
+            # pub_sub 시스템 확인
+            if hasattr(conn.datachannel, 'pub_sub') and conn.datachannel.pub_sub:
+                print("✅ pub_sub 시스템 확인됨")
+            else:
+                print("❌ pub_sub 시스템 없음")
+        else:
+            print("❌ 데이터채널 없음")
+            print(f"🔍 conn 속성들: {[attr for attr in dir(conn) if not attr.startswith('_')]}")
+        
+        # 🆕 연결 상태 파일에 저장 (채널 확인 후)
+        save_webrtc_connection_status()
+        
+        # BMS 상태 구독 추가 (데이터채널이 있는 경우에만)
+        if hasattr(conn, 'datachannel') and conn.datachannel and hasattr(conn.datachannel, 'pub_sub'):
+            print("[BMS] LOW_STATE 구독 시작...")
+            conn.datachannel.pub_sub.subscribe(RTC_TOPIC['LOW_STATE'], lowstate_callback)
+        else:
+            print("[BMS] 데이터채널이 없어서 BMS 구독 건너뜀")
         
         await _ensure_normal_mode(conn)
-        asyncio.create_task(handle_command(conn))
+        
+        # 명령 핸들러는 데이터채널이 있는 경우에만 시작
+        if hasattr(conn, 'datachannel') and conn.datachannel:
+            asyncio.create_task(handle_command(conn))
+        else:
+            print("⚠️ 데이터채널이 없어서 명령 핸들러 시작하지 않음")
+        
+        # 주기적으로 상태 업데이트
+        async def update_status_periodically():
+            while True:
+                await asyncio.sleep(30)  # 30초마다 상태 업데이트
+                save_webrtc_connection_status()
+        
+        asyncio.create_task(update_status_periodically())
         
         # 루프가 살아있도록 대기
         while True:
@@ -297,6 +352,72 @@ def ensure_normal_mode_once():
             await asyncio.sleep(10)
     threading.Thread(target=lambda: asyncio.run(switch()), daemon=True).start()
     return True
+
+def save_webrtc_connection_status():
+    """WebRTC 연결 상태를 파일에 저장 - 개선됨"""
+    try:
+        conn = _conn_holder.get('conn')
+        
+        # 더 정확한 상태 확인
+        connected = conn is not None
+        has_datachannel = False
+        has_audio = False
+        has_video = False
+        connection_state = "unknown"
+        
+        if conn:
+            # PeerConnection 상태 확인
+            if hasattr(conn, 'pc') and conn.pc:
+                connection_state = getattr(conn.pc, 'connectionState', 'unknown')
+                print(f"🔍 PeerConnection 상태: {connection_state}")
+            
+            # 데이터채널 확인
+            if hasattr(conn, 'datachannel') and conn.datachannel is not None:
+                has_datachannel = True
+                print(f"✅ 데이터채널 확인됨: {type(conn.datachannel)}")
+            else:
+                print(f"❌ 데이터채널 없음: datachannel={getattr(conn, 'datachannel', 'None')}")
+            
+            # 오디오채널 확인
+            if hasattr(conn, 'audio') and conn.audio is not None:
+                has_audio = True
+                print(f"✅ 오디오채널 확인됨: {type(conn.audio)}")
+            else:
+                print(f"❌ 오디오채널 없음: audio={getattr(conn, 'audio', 'None')}")
+            
+            # 비디오채널 확인
+            if hasattr(conn, 'video') and conn.video is not None:
+                has_video = True
+                print(f"✅ 비디오채널 확인됨: {type(conn.video)}")
+        
+        status_data = {
+            'connected': connected,
+            'has_datachannel': has_datachannel,
+            'has_audio': has_audio,
+            'has_video': has_video,
+            'connection_state': connection_state,
+            'connection_time': time.time(),
+            'serial_number': SERIAL_NUMBER,
+            'ready_for_voice_bridge': connected and connection_state == 'connected',
+            'process_id': os.getpid(),  # 🆕 프로세스 ID 추가
+            'connection_holder_status': 'active' if _conn_holder.get('conn') else 'empty'
+        }
+        
+        with open('.webrtc_connection_status.json', 'w') as f:
+            json.dump(status_data, f)
+            
+        print(f"📝 WebRTC 연결 상태 저장 (PID: {os.getpid()}):")
+        print(f"   연결: {'✅' if connected else '❌'}")
+        print(f"   PeerConnection: {connection_state}")
+        print(f"   데이터채널: {'✅' if has_datachannel else '❌'}")
+        print(f"   오디오채널: {'✅' if has_audio else '❌'}")
+        print(f"   비디오채널: {'✅' if has_video else '❌'}")
+        print(f"   음성브리지 준비: {'✅' if status_data['ready_for_voice_bridge'] else '❌'}")
+        
+    except Exception as e:
+        print(f"❌ WebRTC 연결 상태 저장 실패: {e}")
+        import traceback
+        print(f"🔍 상세 오류: {traceback.format_exc()}")
 
 if __name__ == "__main__":
     frame_queue = Queue(maxsize=10)

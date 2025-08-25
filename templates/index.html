@@ -277,6 +277,27 @@
                         <button class="action-btn btn btn-info" onclick="move('sit')">SIT</button>
                     </div>
                 </div>
+
+                <!-- 🔧 간소화된 오디오 제어 -->
+                <div class="control-section">
+                    <h3>🎵 음성 채널 연동</h3>
+                    <div class="action-buttons">
+                        <button class="action-btn btn btn-success" onclick="connectVoiceChannel()">
+                            🔗 음성 연결 & 브리지 시작
+                        </button>
+                        <button class="action-btn btn btn-danger" onclick="disconnectVoiceChannel()">
+                            🔇 브리지 중지 & 퇴장
+                        </button>
+                    </div>
+                    <div class="status-display" id="voice-status">
+                        <span class="status-indicator status-off"></span>
+                        <strong>음성 상태:</strong> <span id="voice-status-text">비활성화</span>
+                    </div>
+                    <p style="text-align: center; color: #666; font-size: 0.9em;">
+                        Discord 음성 채널과 로봇 오디오를 연동합니다<br>
+                        <strong>연결 시 자동으로 양방향 브리지가 활성화됩니다</strong>
+                    </p>
+                </div>
             </div>
         </div>
 
@@ -315,6 +336,89 @@
 
         function clearLog() {
             document.getElementById('log-area').innerHTML = '로그가 지워졌습니다...\n';
+        }
+
+        // 🆕 음성 관련 JavaScript 함수들 추가
+        function connectVoiceChannel() {
+            fetch('/voice_connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    addLog('🔗 Discord 음성 채널 연결 및 브리지 시작 요청됨');
+                    addLog('🎵 자동으로 양방향 음성 브리지가 활성화됩니다');
+                    updateVoiceStatus('connecting', '연결 중...');
+                    
+                    // 5초 후 상태 확인
+                    setTimeout(checkVoiceStatus, 5000);
+                } else {
+                    addLog('❌ 음성 채널 연결 실패: ' + data.message);
+                    updateVoiceStatus('off', '연결 실패');
+                }
+            })
+            .catch(error => {
+                addLog('❌ 음성 채널 연결 오류: ' + error);
+                updateVoiceStatus('off', '연결 오류');
+            });
+        }
+
+        function disconnectVoiceChannel() {
+            fetch('/voice_disconnect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    addLog('🔇 음성 브리지 중지 및 Discord 봇 퇴장 요청됨');
+                    addLog('🤖 자동으로 모든 음성 연결이 해제됩니다');
+                    updateVoiceStatus('off', '비활성화');
+                } else {
+                    addLog('❌ 음성 채널 연결 해제 실패: ' + data.message);
+                }
+            })
+            .catch(error => {
+                addLog('❌ 음성 채널 연결 해제 오류: ' + error);
+            });
+        }
+
+        function updateVoiceStatus(status, text) {
+            const indicator = document.querySelector('#voice-status .status-indicator');
+            const statusText = document.getElementById('voice-status-text');
+            
+            indicator.className = 'status-indicator';
+            if (status === 'active') {
+                indicator.classList.add('status-on');
+            } else if (status === 'connecting') {
+                indicator.classList.add('status-scanning');
+            } else {
+                indicator.classList.add('status-off');
+            }
+            
+            statusText.textContent = text;
+        }
+
+        function checkVoiceStatus() {
+            fetch('/voice_status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.voice_connected && data.bridge_active) {
+                    updateVoiceStatus('active', '양방향 브리지 활성화');
+                    addLog('✅ 음성 연결 및 브리지 활성화 완료!');
+                    addLog('🗣️ Discord 음성 → 로봇 스피커');
+                    addLog('🔊 로봇 마이크 → Discord 음성');
+                } else if (data.voice_connected) {
+                    updateVoiceStatus('connecting', '연결됨 (브리지 대기)');
+                } else {
+                    updateVoiceStatus('off', '비활성화');
+                }
+            })
+            .catch(error => {
+                console.error('음성 상태 확인 오류:', error);
+                updateVoiceStatus('off', '상태 확인 실패');
+            });
         }
 
         // 🔧 시스템 시작 (레이아웃 변경 포함)
@@ -379,7 +483,7 @@
                 body: JSON.stringify({ direction: direction })
             })
             .then(res => res.json())
-            .then(data => {
+            .then (data => {
                 addLog(`🤖 동작 명령: ${direction}`);
             })
             .catch(error => {
@@ -461,11 +565,12 @@
             statusText.textContent = text;
         }
 
-        // 상태 모니터링 (기존 유지)
+        // 🔧 상태 모니터링에 음성 상태 추가
         function startStatusMonitoring() {
             if (statusMonitorId) return;
             
             statusMonitorId = setInterval(() => {
+                // 기존 ArUco 상태 확인
                 fetch('/aruco_scan_status')
                 .then(response => response.json())
                 .then(data => {
@@ -487,7 +592,11 @@
                 .catch(error => {
                     document.getElementById('connection-status').textContent = '연결 오류';
                 });
-            }, 2000); // 2초마다 상태 확인
+                
+                // 🆕 음성 상태 확인 추가
+                checkVoiceStatus();
+                
+            }, 3000); // 3초마다 상태 확인
         }
 
         function stopStatusMonitoring() {
@@ -524,7 +633,7 @@
                     // 🔧 joystick-zone 크기 측정
                     const zoneRect = joystickZone.getBoundingClientRect();
                     const zoneSize = Math.min(zoneRect.width, zoneRect.height);
-                    const joystickSize = Math.floor(zoneSize * 0.7); // zone의 80%
+                    const joystickSize = Math.floor(zoneSize * 0.7); // zone의 70%
                     
                     console.log(`🎯 조이스틱 크기: ${joystickSize}px`);
 
@@ -603,6 +712,9 @@
         window.onload = function() {
             addLog('🌟 시스템이 준비되었습니다.');
             addLog('📋 START CONTROL을 눌러 시작하세요.');
+            
+            // 🆕 페이지 로드 시 음성 상태 한 번 확인
+            setTimeout(checkVoiceStatus, 1000);
         };
     </script>
 </body>

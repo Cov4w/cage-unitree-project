@@ -16,3 +16,5 @@ qr_codes
 qr_sample
 aruco_identities.json
 aruco_identity_markers
+.voice_status.json
+.webrtc_connection_status.json
