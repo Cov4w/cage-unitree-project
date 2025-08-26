@@ -141,24 +141,19 @@ class AdvancedDiscordAudioCapture:
         
         try:
             if DISCORD_SINKS_AVAILABLE:
-                # Discord.py 2.x+ 방식 사용
-                sink = EnhancedWaveSink(self)
-                
-                voice_client.start_recording(
-                    sink,
-                    self._recording_finished_callback
-                )
-                
-                print("🎙️ Discord 고급 음성 녹음 시작 (sinks 사용)")
+                # Discord.py 2.x+ sinks 사용
+                enhanced_sink = EnhancedWaveSink(self)
+                voice_client.start_recording(enhanced_sink, self._recording_finished_callback)
+                print("🎙️ Discord sinks를 이용한 녹음 시작")
                 self.is_recording = True
                 return True
                 
             elif AUDIO_LIBS_AVAILABLE:
-                # PyAudio 대안 방식
+                # PyAudio 대안 사용
                 return self._start_pyaudio_capture()
                 
             else:
-                print("❌ 모든 오디오 캡처 방법 사용 불가")
+                print("❌ 사용 가능한 오디오 캡처 방법이 없습니다")
                 return False
                 
         except Exception as e:

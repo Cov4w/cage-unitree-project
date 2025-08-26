@@ -742,6 +742,9 @@ def voice_status():
 def get_connection_status():
     """현재 WebRTC 연결 상태 반환"""
     try:
+        # 🔧 _conn_holder import 추가
+        from webrtc_producer import _conn_holder
+        
         if _conn_holder and 'conn' in _conn_holder and _conn_holder['conn']:
             conn = _conn_holder['conn']
             
