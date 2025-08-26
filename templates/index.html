@@ -232,7 +232,7 @@
         <div class="control-section full-width-section">
             <h3>🔖 ArUco 신원 확인 시스템</h3>
             <p style="margin: 5px 0; color: #666;">
-                📋 <strong>프로세스:</strong> SIT 버튼 → YOLO 비활성화 → ArUco 마커 스캔 → 신원 확인 → Discord 알림
+                📋 <strong>프로세스:</strong> SIT 버튼 → YOLO 비활성화 → ArUco 마커 스캔 → 신원 확인 → Discord 알림 → <strong>자동 STANDUP 복구</strong>
             </p>
             <div class="status-display" id="aruco-status">
                 <span class="status-indicator status-off"></span>
@@ -242,10 +242,13 @@
                 🔖 ArUco 신원 스캔 시작
             </button>
             <button onclick="stopArUcoScan()" class="btn btn-danger">
-                🛑 ArUco 스캔 중지
+                🛑 ArUco 스캔 중지 & 복구
             </button>
             <button onclick="checkArUcoStatus()" class="btn btn-info">
                 📊 ArUco 상태 확인
+            </button>
+            <button onclick="checkRobotStatus()" class="btn btn-warning">
+                🤖 로봇 상태 확인
             </button>
         </div>
 
@@ -514,6 +517,7 @@
             });
         }
 
+        // 🆕 ArUco 스캔 중지 함수 개선
         function stopArUcoScan() {
             fetch('/stop_aruco_scan', {
                 method: 'POST',
@@ -524,7 +528,20 @@
                 if (data.status === 'success') {
                     addLog(`🛑 ArUco 스캔 중지됨! (${data.attempts_made}번 시도함)`);
                     addLog(`🔄 YOLO 모델 재활성화됨`);
-                    updateArUcoStatus('off', '대기 중');
+                    
+                    // 🆕 로봇 복구 상태 표시
+                    if (data.robot_recovered) {
+                        addLog(`🤖 로봇 자세 복구 완료 (이전 상태: ${data.previous_robot_state})`);
+                        addLog(`🤖 현재 로봇이 standup 자세로 복귀했습니다`);
+                    }
+                    
+                    updateArUcoStatus('off', '대기 중 (복구 완료)');
+                    
+                    // 3초 후 상태 메시지 정리
+                    setTimeout(() => {
+                        updateArUcoStatus('off', '대기 중');
+                    }, 3000);
+                    
                 } else {
                     addLog('❌ ArUco 스캔 중지 실패: ' + data.message);
                 }

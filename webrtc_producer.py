@@ -38,6 +38,8 @@ _conn_holder = {}
 # 최신 조이스틱 값만 저장 (sitdown/situp 등은 큐 사용)
 latest_joystick = None
 robot_state = "unknown"  # 초기 상태는 unknown
+robot_state_history = []  # 🆕 상태 이력 추적
+robot_state_lock = threading.Lock()  # 🆕 상태 변경 동기화
 latest_bms_state = None  # BMS 상태 저장용
 
 def start_webrtc(frame_queue, command_queue):
@@ -61,13 +63,13 @@ def start_webrtc(frame_queue, command_queue):
             latest_bms_state = current_message['bms_state']
             print(f"[BMS 업데이트] SOC: {latest_bms_state['soc']}%, 전류: {latest_bms_state['current']}mA")
             
-            # 파일로 BMS 상태 저장
+            # 파일로 BMS 상태 저장 (현재 로봇 상태 포함)
             bms_file = os.path.join(os.getcwd(), '.bms_state.json')
             with open(bms_file, 'w') as f:
                 json.dump({
                     'timestamp': time.time(),
                     'bms_state': latest_bms_state,
-                    'robot_state': robot_state,
+                    'robot_state': get_robot_state_safe(),  # 🆕 동기화된 상태 사용
                     'connection_status': 'connected'
                 }, f)
                 
@@ -105,18 +107,20 @@ def start_webrtc(frame_queue, command_queue):
             print(f"[모드 확인] 에러 발생: {e}")
 
     async def handle_command(conn):
-        global latest_joystick, robot_state
+        global latest_joystick
         while True:
             # sitdown/situp 등은 큐에서 처리
             if not command_queue.empty():
                 direction = command_queue.get()
+                
                 if direction == "sitdown":
                     print("Performing 'StandDown' movement...")
                     await conn.datachannel.pub_sub.publish_request_new(
                         RTC_TOPIC["SPORT_MOD"],
                         {"api_id": SPORT_CMD["StandDown"]}
                     )
-                    robot_state = "sitdown"
+                    update_robot_state("sitdown", "sitdown_command")
+                    
                 elif direction == "situp":
                     print("Performing 'StandUp' movement...")
                     await conn.datachannel.pub_sub.publish_request_new(
@@ -128,18 +132,20 @@ def start_webrtc(frame_queue, command_queue):
                         RTC_TOPIC["SPORT_MOD"],
                         {"api_id": SPORT_CMD["BalanceStand"]}
                     )
-                    robot_state = "situp"
+                    update_robot_state("situp", "situp_command")
+                    
                 elif direction == "sit":
-                    if robot_state == "situp":
+                    current_state = get_robot_state_safe()
+                    if current_state == "situp":
                         print("Performing 'Sit' movement...")
                         await conn.datachannel.pub_sub.publish_request_new(
                             RTC_TOPIC["SPORT_MOD"],
                             {"api_id": SPORT_CMD["Sit"]}
                         )
-                        robot_state = "sit"
+                        update_robot_state("sit", "sit_command")
                     else:
                         print("Not situp, switching to situp first...")
-                        # StandUp → BalanceStand → SitUp → Sit
+                        # StandUp → BalanceStand → Sit
                         await conn.datachannel.pub_sub.publish_request_new(
                             RTC_TOPIC["SPORT_MOD"],
                             {"api_id": SPORT_CMD["StandUp"]}
@@ -148,14 +154,50 @@ def start_webrtc(frame_queue, command_queue):
                             RTC_TOPIC["SPORT_MOD"],
                             {"api_id": SPORT_CMD["BalanceStand"]}
                         )
-                        robot_state = "situp"
+                        update_robot_state("situp", "auto_situp_for_sit")
+                        
                         print("Performing 'Sit' movement...")
                         await conn.datachannel.pub_sub.publish_request_new(
                             RTC_TOPIC["SPORT_MOD"],
                             {"api_id": SPORT_CMD["Sit"]}
                         )
-                        robot_state = "sit"
+                        update_robot_state("sit", "sit_command")
+                        
+                # 🆕 standup 명령 추가 (ArUco 복구용)
+                elif direction == "standup":
+                    current_state = get_robot_state_safe()
+                    print(f"Performing 'StandUp' recovery from {current_state}...")
+                    
+                    # sit 또는 sitdown에서 standup으로 복구
+                    if current_state in ["sit", "sitdown"]:
+                        # StandUp → BalanceStand 시퀀스
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["StandUp"]}
+                        )
+                        print("✅ StandUp 명령 완료")
+                        
+                        # 0.5초 대기 후 BalanceStand
+                        await asyncio.sleep(0.5)
+                        
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["BalanceStand"]}
+                        )
+                        print("✅ BalanceStand 명령 완료")
+                        
+                        update_robot_state("situp", "aruco_recovery")
+                    else:
+                        # 이미 서있는 상태라면 BalanceStand만
+                        await conn.datachannel.pub_sub.publish_request_new(
+                            RTC_TOPIC["SPORT_MOD"],
+                            {"api_id": SPORT_CMD["BalanceStand"]}
+                        )
+                        print("✅ BalanceStand 명령 완료 (이미 서있는 상태)")
+                        update_robot_state("situp", "balance_adjustment")
+                
                 # 기타 명령은 필요시 추가
+            
             # 최신 조이스틱 값만 사용
             if latest_joystick is not None:
                 _, x, z = latest_joystick
@@ -165,7 +207,8 @@ def start_webrtc(frame_queue, command_queue):
                     {"api_id": SPORT_CMD["Move"], "parameter": {"x": float(x), "y": 0, "z": float(z)}}
                 )
                 print("Move response:", response)
-            await asyncio.sleep(0.1)  # 50ms마다 최신 값 전송
+                
+            await asyncio.sleep(0.1)  # 100ms마다 체크
 
     async def main_webrtc():
         global _conn_holder
@@ -274,31 +317,63 @@ def get_bms_state():
         print(f"BMS 상태 파일 읽기 오류: {e}")
         return None
 
+def get_robot_state_safe():
+    """동기화된 로봇 상태 조회"""
+    with robot_state_lock:
+        return robot_state
+
+def update_robot_state(new_state, reason="command"):
+    """로봇 상태 업데이트 (동기화 및 이력 추가)"""
+    global robot_state, robot_state_history
+    
+    with robot_state_lock:
+        old_state = robot_state
+        robot_state = new_state
+        
+        # 상태 이력 추가
+        robot_state_history.append({
+            'timestamp': time.time(),
+            'old_state': old_state,
+            'new_state': new_state,
+            'reason': reason
+        })
+        
+        # 이력은 최근 10개만 유지
+        if len(robot_state_history) > 10:
+            robot_state_history = robot_state_history[-10:]
+        
+        print(f"🤖 로봇 상태 변경: {old_state} → {new_state} (이유: {reason})")
+
 def get_robot_status():
-    """로봇의 전체 상태를 파일에서 읽어서 반환"""
+    """로봇의 전체 상태를 파일에서 읽어서 반환 - 개선됨"""
     try:
+        current_state = get_robot_state_safe()
+        
         bms_file = os.path.join(os.getcwd(), '.bms_state.json')
+        bms_data = None
+        connection_status = 'disconnected'
+        
         if os.path.exists(bms_file):
             with open(bms_file, 'r') as f:
                 data = json.load(f)
                 # 5분 이내 데이터만 유효
                 if time.time() - data['timestamp'] < 300:
-                    return {
-                        'robot_state': data.get('robot_state', 'unknown'),
-                        'bms_state': data.get('bms_state'),
-                        'connection_status': data.get('connection_status', 'disconnected')
-                    }
+                    bms_data = data.get('bms_state')
+                    connection_status = data.get('connection_status', 'disconnected')
+        
         return {
-            'robot_state': 'unknown',
-            'bms_state': None,
-            'connection_status': 'disconnected'
+            'robot_state': current_state,
+            'bms_state': bms_data,
+            'connection_status': connection_status,
+            'state_history': robot_state_history[-5:] if robot_state_history else []  # 최근 5개 이력
         }
     except Exception as e:
         print(f"로봇 상태 파일 읽기 오류: {e}")
         return {
-            'robot_state': 'unknown',
+            'robot_state': get_robot_state_safe(),
             'bms_state': None,
-            'connection_status': 'disconnected'
+            'connection_status': 'disconnected',
+            'state_history': []
         }
 
 

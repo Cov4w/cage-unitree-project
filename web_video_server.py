@@ -83,15 +83,23 @@ def reset_aruco_scan_state():
     aruco_last_detection_time = None
 
 def auto_recover_system():
-    """ArUco 스캔 완료 후 자동 시스템 복구"""
+    """ArUco 스캔 완료 후 자동 시스템 복구 - 개선됨"""
     global yolo_active
     
     print("🔄 시스템 자동 복구 시작...")
     
     try:
-        # 일어서기 명령
-        send_command(command_queue, 'standup')
-        print("🤖 일어서기 자세 복귀")
+        # 🆕 현재 로봇 상태 확인
+        robot_status = get_robot_current_state()
+        print(f"🤖 현재 로봇 상태: {robot_status}")
+        
+        # 🆕 sit 상태에서 standup으로 복구
+        if robot_status in ['sit', 'sitdown', 'unknown']:
+            print("🤖 sit 상태에서 standup 자세로 복구 중...")
+            send_command(command_queue, 'standup')
+            print("✅ standup 명령 전송 완료")
+        else:
+            print("🤖 이미 적절한 자세입니다.")
         
         # ArUco 스캔 상태 초기화
         reset_aruco_scan_state()
@@ -617,7 +625,7 @@ def start_aruco_scan():
 
 @app.route('/stop_aruco_scan', methods=['POST'])
 def stop_aruco_scan():
-    """ArUco 스캔 중지 및 YOLO 재활성화"""
+    """ArUco 스캔 중지 및 시스템 복구 - 개선됨"""
     global yolo_active, aruco_scan_mode
     
     try:
@@ -625,9 +633,22 @@ def stop_aruco_scan():
         
         attempts_made = aruco_scan_attempts
         
-        # 일어서기 명령
-        send_command(command_queue, 'standup')
-        print("🤖 일어서기 자세 복귀")
+        # 🆕 현재 로봇 상태 확인
+        robot_status = get_robot_current_state()
+        print(f"🤖 현재 로봇 상태: {robot_status}")
+        
+        # 🆕 sit 또는 sitdown 상태라면 standup으로 복구
+        if robot_status in ['sit', 'sitdown', 'unknown']:
+            print("🤖 sit 상태에서 standup 자세로 복구 중...")
+            send_command(command_queue, 'standup')
+            print("✅ standup 명령 전송 완료")
+            
+            # 1초 대기 후 상태 재확인
+            time.sleep(1)
+            new_status = get_robot_current_state()
+            print(f"🤖 복구 후 로봇 상태: {new_status}")
+        else:
+            print("🤖 이미 적절한 자세입니다.")
         
         # ArUco 스캔 상태 초기화
         reset_aruco_scan_state()
@@ -640,7 +661,9 @@ def stop_aruco_scan():
             'status': 'success',
             'message': 'ArUco 스캔이 중지되고 시스템이 복구되었습니다.',
             'attempts_made': attempts_made,
-            'yolo_reactivated': True
+            'yolo_reactivated': True,
+            'robot_recovered': True,
+            'previous_robot_state': robot_status
         })
         
     except Exception as e:
@@ -777,6 +800,16 @@ def is_connection_ready_for_audio():
     """오디오 브리지를 위한 연결 준비 상태 확인"""
     status = get_connection_status()
     return status.get('connected', False) and status.get('has_datachannel', False)
+
+def get_robot_current_state():
+    """현재 로봇 상태를 webrtc_producer에서 가져오기"""
+    try:
+        from webrtc_producer import get_robot_status
+        status = get_robot_status()
+        return status.get('robot_state', 'unknown')
+    except Exception as e:
+        print(f"⚠️ 로봇 상태 조회 실패: {e}")
+        return 'unknown'
 
 if __name__ == "__main__":
     print("🚀 Unitree 웹 비디오 서버 시작!")
