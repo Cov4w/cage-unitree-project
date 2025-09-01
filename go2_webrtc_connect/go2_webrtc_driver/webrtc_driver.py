@@ -65,7 +65,42 @@ class Go2WebRTCConnection:
 
     def create_webrtc_configuration(self, turn_server_info, stunEnable=True, turnEnable=True):
         ice_servers = []
-
+        is_azure = os.getenv('DEPLOYMENT_ENV') == 'server'
+        
+        if is_azure:
+            print("🌐 Azure 환경용 WebRTC 설정 적용")
+            
+            # Azure에서는 TURN 서버를 우선 추가
+            if turn_server_info and turnEnable:
+                username = turn_server_info.get("user")
+                credential = turn_server_info.get("passwd")
+                turn_url = turn_server_info.get("realm")
+                
+                if username and credential and turn_url:
+                    ice_servers.append(
+                        RTCIceServer(
+                            urls=[turn_url],
+                            username=username,
+                            credential=credential
+                        )
+                    )
+                    print(f"🔄 TURN 서버 우선 추가: {turn_url}")
+            
+            # 그 다음 STUN 서버들 추가
+            if stunEnable:
+                azure_stun_servers = [
+                    "stun:stun.l.google.com:19302",
+                    "stun:stun1.l.google.com:19302", 
+                    "stun:stun2.l.google.com:19302",
+                    "stun:stun3.l.google.com:19302",
+                    "stun:stun4.l.google.com:19302"
+                ]
+                
+                for stun_url in azure_stun_servers:
+                    ice_servers.append(RTCIceServer(urls=[stun_url]))
+        
+            print(f"🔗 Azure 최적화 후 ICE 서버 개수: {len(ice_servers)}개")
+        
         # 환경변수에서 STUN 서버 읽기
         stun_servers = [
             os.getenv('STUN_SERVER_1', 'stun:stun.l.google.com:19302'),
@@ -192,7 +227,18 @@ class Go2WebRTCConnection:
         logging.info("Creating offer...")
         offer = await self.pc.createOffer()
         await self.pc.setLocalDescription(offer)
-
+        
+        # Azure 환경에서 ICE 수집 완료 대기
+        is_azure = os.getenv('DEPLOYMENT_ENV') == 'server'
+        if is_azure:
+            print("🧊 Azure 환경: ICE 수집 완료 대기 중...")
+            ice_timeout = 10  # 10초 대기
+            try:
+                await asyncio.wait_for(self._wait_for_ice_complete(), timeout=ice_timeout)
+                print("✅ ICE 수집 완료 확인")
+            except asyncio.TimeoutError:
+                print(f"⚠️ ICE 수집이 {ice_timeout}초 내에 완료되지 않았지만 계속 진행")
+    
         if self.connectionMethod == WebRTCConnectionMethod.Remote:
             peer_answer_json = await self.get_answer_from_remote_peer(self.pc, turn_server_info)
         elif self.connectionMethod == WebRTCConnectionMethod.LocalSTA or self.connectionMethod == WebRTCConnectionMethod.LocalAP:
@@ -236,6 +282,11 @@ class Go2WebRTCConnection:
             print(f"❌ DataChannel 연결 실패: {e}")
             raise ConnectionError(f"DataChannel connection failed: {e}")
     
+    async def _wait_for_ice_complete(self):
+        """ICE 수집 완료까지 대기"""
+        while self.pc.iceGatheringState != "complete":
+            await asyncio.sleep(0.1)
+
     async def get_answer_from_remote_peer(self, pc, turn_server_info):
         sdp_offer = pc.localDescription
 
