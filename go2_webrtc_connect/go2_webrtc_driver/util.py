@@ -5,8 +5,18 @@ import requests
 import time
 import sys
 import os
-import jwt
-from dotenv import load_dotenv  # 추가
+
+# JWT 라이브러리 안전한 import
+try:
+    import jwt
+    JWT_AVAILABLE = True
+    print("[TokenManager] ✅ PyJWT 라이브러리 로드 성공")
+except ImportError as e:
+    print(f"[TokenManager] ❌ JWT 라이브러리 로드 실패: {e}")
+    print("[TokenManager] 설치 명령어: pip install PyJWT")
+    JWT_AVAILABLE = False
+
+from dotenv import load_dotenv
 from Crypto.PublicKey import RSA
 from .unitree_auth import make_remote_request
 from .encryption import rsa_encrypt, rsa_load_public_key, aes_decrypt, generate_aes_key
@@ -92,7 +102,6 @@ class TokenManager:
         self.email = os.getenv("UNITREE_USERNAME")
         self.password = os.getenv("UNITREE_PASSWORD")
         
-        # 필수 환경변수 검증
         if not self.email or not self.password:
             print("[TokenManager] ❌ UNITREE_USERNAME 또는 UNITREE_PASSWORD가 설정되지 않았습니다.")
             print("[TokenManager] .env 파일을 확인하세요.")
@@ -103,24 +112,46 @@ class TokenManager:
         self.token = self._load_token()
         
         if self.token:
-            try:
-                payload = jwt.decode(self.token, options={"verify_signature": False})
+            self._validate_token()
+        else:
+            print("[TokenManager] ℹ️ 기존 토큰 없음 - 필요시 새로 발급")
+
+    def _decode_jwt_safe(self, token):
+        """안전한 JWT 디코딩"""
+        if not JWT_AVAILABLE:
+            print("[TokenManager] ⚠️ JWT 라이브러리 없음 - 토큰 검증 스킵")
+            # JWT 없이도 동작하도록 임시 payload 반환
+            return {"exp": time.time() + 3600}  # 1시간 후 만료로 가정
+        
+        try:
+            return jwt.decode(token, options={"verify_signature": False})
+        except Exception as e:
+            print(f"[TokenManager] JWT 디코딩 실패: {e}")
+            return None
+
+    def _validate_token(self):
+        """토큰 유효성 검사"""
+        try:
+            payload = self._decode_jwt_safe(self.token)
+            if payload:
                 exp = payload.get("exp", 0)
                 now = time.time()
                 remain = exp - now
-                if remain > 60:  # 1분 이상 남은 경우
+                if remain > 60:
                     print(f"[TokenManager] ✅ 유효한 토큰 로드 완료")
-                    print(f"[TokenManager] 남은 시간: {int(remain)}초 ({time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(exp))} 만료)")
+                    print(f"[TokenManager] 남은 시간: {int(remain)}초")
                 else:
-                    print(f"[TokenManager] ⚠️ 토큰 만료 임박 또는 만료됨")
+                    print(f"[TokenManager] ⚠️ 토큰 만료 임박")
                     self._delete_token()
                     self.token = None
-            except Exception as e:
-                print(f"[TokenManager] ❌ 토큰 파싱 실패: {e}")
+            else:
+                print("[TokenManager] ❌ 토큰 형식 오류")
                 self._delete_token()
                 self.token = None
-        else:
-            print("[TokenManager] ℹ️ 기존 토큰 없음 - 필요시 새로 발급")
+        except Exception as e:
+            print(f"[TokenManager] ❌ 토큰 검증 실패: {e}")
+            self._delete_token()
+            self.token = None
 
     def _load_token(self):
         if os.path.exists(TOKEN_FILE):
@@ -155,11 +186,14 @@ class TokenManager:
     def is_expired(self):
         if not self.token:
             return True
+        if not JWT_AVAILABLE:
+            return False  # JWT 없으면 만료되지 않은 것으로 가정
         try:
-            payload = jwt.decode(self.token, options={"verify_signature": False})
-            exp = payload.get("exp", 0)
-            # 1분 여유를 두고 만료 판단
-            return time.time() > (exp - 60)
+            payload = self._decode_jwt_safe(self.token)
+            if payload:
+                exp = payload.get("exp", 0)
+                return time.time() > (exp - 60)
+            return True
         except Exception:
             return True
 
@@ -177,15 +211,17 @@ class TokenManager:
                 self._save_token(token)
                 print("[TokenManager] ✅ 새 토큰 발급 및 저장 완료")
                 
-                # 만료 시간 출력
-                try:
-                    payload = jwt.decode(token, options={"verify_signature": False})
-                    exp = payload.get("exp", 0)
-                    exp_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(exp))
-                    print(f"[TokenManager] 토큰 만료 시간: {exp_time}")
-                except:
-                    pass
-                    
+                # 만료 시간 출력 (JWT 사용 가능할 때만)
+                if JWT_AVAILABLE:
+                    try:
+                        payload = self._decode_jwt_safe(token)
+                        if payload:
+                            exp = payload.get("exp", 0)
+                            exp_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(exp))
+                            print(f"[TokenManager] 토큰 만료 시간: {exp_time}")
+                    except:
+                        pass
+                        
                 return token
             else:
                 print("[TokenManager] ❌ 토큰 발급 실패 - 인증 정보를 확인하세요.")
