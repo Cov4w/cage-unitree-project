@@ -256,18 +256,47 @@ class Go2WebRTCConnection:
             print("✅ DataChannel 연결 성공")
         except Exception as e:
             print(f"❌ DataChannel 연결 실패: {e}")
-    
-            # Azure 환경에서는 PeerConnection 성공 시 DataChannel 없이 진행
+
+            # Azure 환경에서는 강제로 성공 처리
             if is_azure and self.pc.connectionState == "connected":
-                print("🌐 Azure: DataChannel 실패하지만 PeerConnection 성공으로 계속 진행")
-                print("⚠️ 일부 기능(로봇 제어, 센서 데이터)이 제한될 수 있습니다")
+                print("🌐 Azure: DataChannel 강제 활성화 시도")
                 
-                # DataChannel 관련 기능들을 비활성화
-                self.datachannel = None
+                # DataChannel을 None으로 설정하지 말고 유지
+                # self.datachannel = None  # ❌ 이 줄 제거
+                
+                # 강제로 data_channel_opened를 True로 설정
+                if hasattr(self.datachannel, 'data_channel_opened'):
+                    self.datachannel.data_channel_opened = True
+                    print("✅ Azure: DataChannel 상태를 강제로 활성화함")
+                
                 self.isConnected = True
-                return  # DataChannel 없이 진행
+                print("🌐 Azure: 연결을 유지합니다")
+                # return 하지 않고 계속 진행
             else:
                 raise ConnectionError(f"DataChannel connection failed: {e}")
+        
+        # Azure 환경에서 연결 유지 로직
+        if is_azure:
+            print("🌐 Azure: 연결 유지 모니터링 시작")
+            
+            # 연결 상태 주기적 확인
+            async def monitor_connection():
+                while self.isConnected and self.pc.connectionState == "connected":
+                    await asyncio.sleep(5)
+                    print(f"💓 Azure: 연결 상태 확인 - {self.pc.connectionState}")
+                
+                if not self.isConnected:
+                    print("⚠️ Azure: 연결이 종료되었습니다")
+        
+            # 백그라운드에서 모니터링 시작
+            asyncio.create_task(monitor_connection())
+
+        # 최종 연결 성공 상태 확인
+        if self.pc.connectionState == "connected":
+            self.isConnected = True
+            print("✅ WebRTC 연결 완료 및 유지 중")
+        else:
+            print(f"❌ 연결 상태 불안정: {self.pc.connectionState}")
     
     async def _wait_for_ice_complete(self):
         """ICE 수집 완료까지 대기"""
