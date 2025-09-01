@@ -86,7 +86,7 @@ class Go2WebRTCConnection:
                     )
                     print(f"🔄 TURN 서버 우선 추가: {turn_url}")
             
-            # 그 다음 STUN 서버들 추가
+            # Azure 최적화된 STUN 서버들 추가
             if stunEnable:
                 azure_stun_servers = [
                     "stun:stun.l.google.com:19302",
@@ -99,54 +99,31 @@ class Go2WebRTCConnection:
                 for stun_url in azure_stun_servers:
                     ice_servers.append(RTCIceServer(urls=[stun_url]))
         
-            print(f"🔗 Azure 최적화 후 ICE 서버 개수: {len(ice_servers)}개")
+            print(f"🔗 Azure 최적화 ICE 서버 개수: {len(ice_servers)}개")
         
-        # 환경변수에서 STUN 서버 읽기
-        stun_servers = [
-            os.getenv('STUN_SERVER_1', 'stun:stun.l.google.com:19302'),
-            os.getenv('STUN_SERVER_2', 'stun:stun1.l.google.com:19302')
-        ]
-        
-        for stun_url in stun_servers:
-            if stun_url and stunEnable:
-                ice_servers.append(RTCIceServer(urls=[stun_url]))
-        
-        # TURN 서버 설정
-        if turn_server_info and turnEnable:
-            username = turn_server_info.get("user")
-            credential = turn_server_info.get("passwd")
-            turn_url = turn_server_info.get("realm")
-            
-            if username and credential and turn_url:
-                ice_servers.append(
-                    RTCIceServer(
-                        urls=[turn_url],
-                        username=username,
-                        credential=credential
+        else:
+            # 로컬 환경용 기본 설정
+            if turn_server_info and turnEnable:
+                username = turn_server_info.get("user")
+                credential = turn_server_info.get("passwd")
+                turn_url = turn_server_info.get("realm")
+                
+                if username and credential and turn_url:
+                    ice_servers.append(
+                        RTCIceServer(
+                            urls=[turn_url],
+                            username=username,
+                            credential=credential
+                        )
                     )
-                )
-            else:
-                raise ValueError("Invalid TURN server information")
-        
-        # Azure 환경 감지
-        is_azure = os.getenv('DEPLOYMENT_ENV') == 'server'
-        if is_azure:
-            print("🌐 Azure 환경용 WebRTC 설정 적용")
-            print(f"🔗 사용할 ICE 서버 개수: {len(ice_servers)}개")
+                else:
+                    raise ValueError("Invalid TURN server information")
             
-            # Azure 환경에서 더 많은 STUN 서버 추가 (선택사항)
-            additional_stun = [
-                "stun:stun2.l.google.com:19302",
-                "stun:stun3.l.google.com:19302"
-            ]
-            for stun_url in additional_stun:
+            if stunEnable:
+                stun_url = "stun:stun.l.google.com:19302"
                 ice_servers.append(RTCIceServer(urls=[stun_url]))
-            
-            print(f"🔗 Azure 최적화 후 ICE 서버 개수: {len(ice_servers)}개")
-        
-        # aiortc에서 지원하는 매개변수만 사용
+    
         configuration = RTCConfiguration(iceServers=ice_servers)
-        
         return configuration
 
     async def init_webrtc(self, turn_server_info=None, ip=None):
