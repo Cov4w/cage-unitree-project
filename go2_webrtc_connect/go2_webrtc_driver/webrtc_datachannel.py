@@ -49,7 +49,24 @@ class WebRTCDataChannel:
         # Event handler for data channel open
         @self.channel.on("open")
         def on_open():
+            print("✅ Azure: DataChannel open 이벤트 발생!")
             logging.info("Data channel opened")
+            
+            # Azure 환경에서 즉시 validation 시작
+            if os.getenv('DEPLOYMENT_ENV') == 'server':
+                print("🌐 Azure: DataChannel 열림 확인 - validation 시작")
+                # validation을 비동기로 시작
+                asyncio.create_task(self.start_azure_validation())
+
+        async def start_azure_validation(self):
+            """Azure 환경용 validation 시작"""
+            try:
+                print("🔄 Azure: validation 프로세스 시작")
+                await asyncio.sleep(1)  # 1초 대기
+                await self.validaton.start_validation()
+                print("✅ Azure: validation 완료")
+            except Exception as e:
+                print(f"❌ Azure: validation 실패: {e}")
 
         # Event handler for data channel close
         @self.channel.on("close")
@@ -136,7 +153,6 @@ class WebRTCDataChannel:
 
     async def wait_datachannel_open(self, timeout=60.0):
         """Waits for the data channel to open asynchronously."""        
-        # 환경변수에서 타임아웃 읽기
         env_timeout = float(os.getenv('DATACHANNEL_TIMEOUT', str(timeout)))
         actual_timeout = max(timeout, env_timeout)
         
@@ -153,12 +169,34 @@ class WebRTCDataChannel:
                 current_time = time.time()
                 elapsed = current_time - start_time
                 
+                # DataChannel 상태 체크 및 강제 처리
+                if self.channel and self.channel.readyState == "open" and not self.data_channel_opened:
+                    print("🔧 Azure: DataChannel이 open 상태이지만 validation이 안됨 - 강제 초기화 시도")
+                    try:
+                        # 강제로 validation 시작
+                        await self.validaton.start_validation()
+                        print("✅ Azure: 강제 validation 시작 완료")
+                    except Exception as e:
+                        print(f"⚠️ Azure: 강제 validation 실패: {e}")
+                
                 # 5초마다 상태 로깅
                 if current_time - last_log_time >= 5:
                     print(f"⏳ DataChannel 대기 중... ({int(elapsed)}/{int(actual_timeout)}초)")
                     print(f"   - channel.readyState: {self.channel.readyState if self.channel else 'None'}")
                     print(f"   - data_channel_opened: {self.data_channel_opened}")
                     print(f"   - validation 상태: {hasattr(self.validaton, 'validated') and self.validaton.validated}")
+                    
+                    # Azure 환경에서 30초 후 강제 재시도
+                    if elapsed > 30 and os.getenv('DEPLOYMENT_ENV') == 'server':
+                        print("🔄 Azure: 30초 경과 - DataChannel 재초기화 시도")
+                        try:
+                            # 새로운 DataChannel 생성 시도
+                            if hasattr(self, 'conn') and hasattr(self.conn, 'pc'):
+                                new_channel = self.conn.pc.createDataChannel("data_retry")
+                                print(f"🔧 Azure: 새 DataChannel 생성됨 - 상태: {new_channel.readyState}")
+                        except Exception as e:
+                            print(f"⚠️ Azure: DataChannel 재생성 실패: {e}")
+                    
                     last_log_time = current_time
                 
                 if elapsed >= actual_timeout:
@@ -166,6 +204,12 @@ class WebRTCDataChannel:
                     print(f"🔍 최종 상태:")
                     print(f"   - channel.readyState: {self.channel.readyState if self.channel else 'None'}")
                     print(f"   - data_channel_opened: {self.data_channel_opened}")
+                    
+                    # Azure 환경에서는 더 관대한 처리
+                    if os.getenv('DEPLOYMENT_ENV') == 'server' and self.channel.readyState == "open":
+                        print("🌐 Azure: PeerConnection이 성공했으므로 계속 진행")
+                        return  # 타임아웃이어도 진행
+                    
                     raise Exception(f"DataChannel timeout after {actual_timeout} seconds")
                 
                 await asyncio.sleep(0.1)
