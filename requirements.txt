@@ -10,5 +10,6 @@ lz4
 pydub
 flask
 ultralytics
-dotenv
+python-dotenv
 PyJWT
+discord.py
