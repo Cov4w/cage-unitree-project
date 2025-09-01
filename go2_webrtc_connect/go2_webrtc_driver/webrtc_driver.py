@@ -2,6 +2,7 @@ import asyncio
 import logging
 import json
 import sys
+import os
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceServer, RTCConfiguration
 from aiortc.contrib.media import MediaPlayer
 from .unitree_auth import send_sdp_to_local_peer, send_sdp_to_remote_peer
@@ -62,37 +63,47 @@ class Go2WebRTCConnection:
         await self.connect()
         print_status("WebRTC connection", "🟢 reconnected")
 
-    def create_webrtc_configuration(self, turn_server_info, stunEnable=True, turnEnable=True) -> RTCConfiguration:
+    def create_webrtc_configuration(self, turn_server_info, stunEnable=True, turnEnable=True):
         ice_servers = []
 
-        if turn_server_info:
+        # 환경변수에서 STUN 서버 읽기
+        stun_servers = [
+            os.getenv('STUN_SERVER_1', 'stun:stun.l.google.com:19302'),
+            os.getenv('STUN_SERVER_2', 'stun:stun1.l.google.com:19302')
+        ]
+        
+        for stun_url in stun_servers:
+            if stun_url and stunEnable:
+                ice_servers.append(RTCIceServer(urls=[stun_url]))
+        
+        # TURN 서버 설정
+        if turn_server_info and turnEnable:
             username = turn_server_info.get("user")
             credential = turn_server_info.get("passwd")
             turn_url = turn_server_info.get("realm")
             
             if username and credential and turn_url:
-                if turnEnable:
-                    ice_servers.append(
-                        RTCIceServer(
-                            urls=[turn_url],
-                            username=username,
-                            credential=credential
-                        )
+                ice_servers.append(
+                    RTCIceServer(
+                        urls=[turn_url],
+                        username=username,
+                        credential=credential
                     )
-                if stunEnable:
-                    # Use Google's public STUN server
-                    stun_url = "stun:stun.l.google.com:19302"
-                    ice_servers.append(
-                        RTCIceServer(
-                            urls=[stun_url]
-                        )
-                    )
+                )
             else:
                 raise ValueError("Invalid TURN server information")
         
-        configuration = RTCConfiguration(
-            iceServers=ice_servers
-        )
+        # Azure 환경 최적화
+        is_azure = os.getenv('DEPLOYMENT_ENV') == 'server'
+        if is_azure:
+            # Azure 환경용 추가 설정
+            configuration = RTCConfiguration(
+                iceServers=ice_servers,
+                iceTransportPolicy="all",  # 모든 네트워크 경로 허용
+                bundlePolicy="balanced"    # 네트워크 효율성 최적화
+            )
+        else:
+            configuration = RTCConfiguration(iceServers=ice_servers)
         
         return configuration
 
@@ -183,18 +194,40 @@ class Go2WebRTCConnection:
         if peer_answer_json is not None:
             peer_answer = json.loads(peer_answer_json)
         else:
-            print("Could not get SDP from the peer. Check if the Go2 is switched on")
-            sys.exit(1)
+            error_msg = "Could not get SDP from the peer. Check if the Go2 is switched on"
+            print(f"❌ {error_msg}")
+            raise ConnectionError(error_msg)  # ✅ Exception 발생
 
         if peer_answer['sdp'] == "reject":
-            print("Go2 is connected by another WebRTC client. Close your mobile APP and try again.")
-            sys.exit(1)
+            error_msg = "Go2 is connected by another WebRTC client"
+            print(f"⚠️ {error_msg}")
+            
+            # 서버 환경에서는 대기열 또는 재시도 로직
+            is_azure = os.getenv('DEPLOYMENT_ENV') == 'server'
+            if is_azure:
+                retry_count = int(os.getenv('CONNECTION_RETRY_COUNT', '3'))
+                print(f"🔄 서버 환경: {retry_count}번 재시도 예정")
+                raise ConnectionError(f"{error_msg} - 재시도 가능")
+            else:
+                raise ConnectionError(f"{error_msg} - Close mobile APP and try again")
 
         remote_sdp = RTCSessionDescription(sdp=peer_answer['sdp'], type=peer_answer['type']) 
         await self.pc.setRemoteDescription(remote_sdp)
    
-        await self.datachannel.wait_datachannel_open()
-
+        # Azure 환경 감지 및 타임아웃 설정
+        import os
+        is_azure = os.getenv('DEPLOYMENT_ENV') == 'server'
+        datachannel_timeout = float(os.getenv('DATACHANNEL_TIMEOUT', '30' if not is_azure else '60'))
+        
+        print(f"🌐 환경: {'Azure 서버' if is_azure else '로컬'}")
+        print(f"📡 DataChannel 타임아웃: {datachannel_timeout}초")
+        
+        try:
+            await self.datachannel.wait_datachannel_open(timeout=datachannel_timeout)
+            print("✅ DataChannel 연결 성공")
+        except Exception as e:
+            print(f"❌ DataChannel 연결 실패: {e}")
+            raise ConnectionError(f"DataChannel connection failed: {e}")
     
     async def get_answer_from_remote_peer(self, pc, turn_server_info):
         sdp_offer = pc.localDescription
