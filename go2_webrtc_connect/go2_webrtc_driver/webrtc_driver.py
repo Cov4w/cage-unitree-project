@@ -245,7 +245,6 @@ class Go2WebRTCConnection:
         await self.pc.setRemoteDescription(remote_sdp)
    
         # Azure 환경 감지 및 타임아웃 설정
-        import os
         is_azure = os.getenv('DEPLOYMENT_ENV') == 'server'
         datachannel_timeout = float(os.getenv('DATACHANNEL_TIMEOUT', '30' if not is_azure else '60'))
         
