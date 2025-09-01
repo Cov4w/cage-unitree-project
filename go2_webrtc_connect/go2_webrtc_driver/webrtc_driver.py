@@ -291,6 +291,39 @@ class Go2WebRTCConnection:
             # 백그라운드에서 모니터링 시작
             asyncio.create_task(monitor_connection())
 
+        # Azure 환경에서 강제 연결 유지
+        if is_azure:
+            print("🌐 Azure: 강제 연결 유지 모드 활성화")
+            
+            # PeerConnection 상태 모니터링 및 재연결
+            async def force_keep_connection():
+                reconnect_count = 0
+                max_reconnects = 5
+                
+                while self.isConnected and reconnect_count < max_reconnects:
+                    await asyncio.sleep(10)  # 10초마다 체크
+                    
+                    if self.pc.connectionState != "connected":
+                        print(f"⚠️ Azure: 연결 끊어짐 감지 - 재연결 시도 {reconnect_count + 1}/{max_reconnects}")
+                        
+                        try:
+                            # 재연결 시도
+                            if self.connectionMethod == WebRTCConnectionMethod.Remote:
+                                turn_server_info = fetch_turn_server_info(self.sn, self.token, self.public_key)
+                                await self.init_webrtc(turn_server_info)
+                                reconnect_count += 1
+                                print(f"✅ Azure: 재연결 성공 ({reconnect_count}/{max_reconnects})")
+                            
+                        except Exception as e:
+                            print(f"❌ Azure: 재연결 실패: {e}")
+                            reconnect_count += 1
+                    
+                    else:
+                        print(f"💓 Azure: 연결 상태 양호 - {self.pc.connectionState}")
+            
+            # 백그라운드에서 연결 유지
+            asyncio.create_task(force_keep_connection())
+
         # 최종 연결 성공 상태 확인
         if self.pc.connectionState == "connected":
             self.isConnected = True
