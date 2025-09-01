@@ -218,96 +218,69 @@ def start_webrtc(frame_queue, command_queue):
         # 환경 감지
         is_azure = 'azure' in os.uname().nodename.lower() or os.getenv('DEPLOYMENT_ENV') == 'server'
         
+        # 환경변수에서 설정 읽기
+        webrtc_timeout = int(os.getenv('WEBRTC_TIMEOUT', '30'))
+        datachannel_timeout = int(os.getenv('DATACHANNEL_TIMEOUT', '15'))  # 기본값 증가
+        retry_count = int(os.getenv('WEBRTC_RETRY_COUNT', '3'))
+        
         if is_azure:
             print("🌐 Azure 서버 환경에서 WebRTC 연결 시도...")
-            # Azure 환경에서는 더 긴 타임아웃과 재시도 로직
-            conn = Go2WebRTCConnection(
-                WebRTCConnectionMethod.Remote,
-                serialNumber=SERIAL_NUMBER,
-                username=UNITREE_USERNAME,
-                password=UNITREE_PASSWORD
-            )
-        else:
-            conn = Go2WebRTCConnection(
-                WebRTCConnectionMethod.Remote,
-                serialNumber=SERIAL_NUMBER,
-                username=UNITREE_USERNAME,
-                password=UNITREE_PASSWORD
-            )
-        
-        # 연결 저장
-        _conn_holder['conn'] = conn
-        
-        # 연결 수행
-        await conn.connect()
-        
-        # 🔧 연결 후 채널 상태 확인 및 초기화
-        print("🔍 WebRTC 연결 후 채널 상태 확인...")
-        
-        # 비디오 채널 활성화
-        if hasattr(conn, 'video') and conn.video:
-            conn.video.switchVideoChannel(True)
-            conn.video.add_track_callback(recv_camera_stream)
-            print("✅ 비디오 채널 활성화됨")
-        else:
-            print("❌ 비디오 채널 없음")
-        
-        # 🆕 오디오 채널 확인 및 활성화 시도
-        if hasattr(conn, 'audio') and conn.audio:
-            try:
-                # 오디오 채널 활성화 시도
-                if hasattr(conn.audio, 'switchAudioChannel'):
-                    conn.audio.switchAudioChannel(True)
-                    print("✅ 오디오 채널 활성화됨")
-                else:
-                    print("⚠️ 오디오 채널에 switchAudioChannel 메서드 없음")
-            except Exception as e:
-                print(f"⚠️ 오디오 채널 활성화 실패: {e}")
-        else:
-            print("❌ 오디오 채널 없음")
-        
-        # 🆕 데이터채널 확인
-        if hasattr(conn, 'datachannel') and conn.datachannel:
-            print("✅ 데이터채널 확인됨")
+            print("🔧 서버 환경 최적화 설정 적용")
             
-            # pub_sub 시스템 확인
-            if hasattr(conn.datachannel, 'pub_sub') and conn.datachannel.pub_sub:
-                print("✅ pub_sub 시스템 확인됨")
-            else:
-                print("❌ pub_sub 시스템 없음")
+            # Azure 환경용 특별 설정
+            webrtc_timeout = max(webrtc_timeout, 45)  # 최소 45초
+            datachannel_timeout = max(datachannel_timeout, 20)  # 최소 20초
+            
+            print(f"⏱️ Azure 환경용 WebRTC 타임아웃: {webrtc_timeout}초")
+            print(f"📡 Azure 환경용 DataChannel 타임아웃: {datachannel_timeout}초")
         else:
-            print("❌ 데이터채널 없음")
-            print(f"🔍 conn 속성들: {[attr for attr in dir(conn) if not attr.startswith('_')]}")
+            print("🏠 로컬 환경에서 WebRTC 연결 시도...")
         
-        # 🆕 연결 상태 파일에 저장 (채널 확인 후)
-        save_webrtc_connection_status()
-        
-        # BMS 상태 구독 추가 (데이터채널이 있는 경우에만)
-        if hasattr(conn, 'datachannel') and conn.datachannel and hasattr(conn.datachannel, 'pub_sub'):
-            print("[BMS] LOW_STATE 구독 시작...")
-            conn.datachannel.pub_sub.subscribe(RTC_TOPIC['LOW_STATE'], lowstate_callback)
-        else:
-            print("[BMS] 데이터채널이 없어서 BMS 구독 건너뜀")
-        
-        await _ensure_normal_mode(conn)
-        
-        # 명령 핸들러는 데이터채널이 있는 경우에만 시작
-        if hasattr(conn, 'datachannel') and conn.datachannel:
-            asyncio.create_task(handle_command(conn))
-        else:
-            print("⚠️ 데이터채널이 없어서 명령 핸들러 시작하지 않음")
-        
-        # 주기적으로 상태 업데이트
-        async def update_status_periodically():
-            while True:
-                await asyncio.sleep(30)  # 30초마다 상태 업데이트
-                save_webrtc_connection_status()
-        
-        asyncio.create_task(update_status_periodically())
-        
-        # 루프가 살아있도록 대기
-        while True:
-            await asyncio.sleep(1)
+        # 환경변수에 Azure 설정 임시 적용
+        if is_azure:
+            os.environ['WEBRTC_TIMEOUT'] = str(webrtc_timeout)
+            os.environ['DATACHANNEL_TIMEOUT'] = str(datachannel_timeout)
+
+        conn = Go2WebRTCConnection(
+            WebRTCConnectionMethod.Remote,
+            serialNumber=SERIAL_NUMBER,
+            username=UNITREE_USERNAME,
+            password=UNITREE_PASSWORD
+        )
+
+        _conn_holder = conn
+
+        # 재시도 로직으로 연결 시도
+        for attempt in range(retry_count):
+            try:
+                print(f"🔄 WebRTC 연결 시도 {attempt + 1}/{retry_count}")
+                
+                # Azure 환경에서는 더 긴 대기 시간
+                if is_azure:
+                    print("🌐 서버 환경: 확장된 타임아웃으로 연결 시도")
+                    await asyncio.wait_for(conn.connect(), timeout=webrtc_timeout)
+                else:
+                    await asyncio.wait_for(conn.connect(), timeout=webrtc_timeout)
+                
+                print("✅ WebRTC 연결 성공!")
+                break
+                
+            except asyncio.TimeoutError:
+                print(f"⏱️ 연결 타임아웃 (시도 {attempt + 1}/{retry_count})")
+                if attempt == retry_count - 1:
+                    print("❌ 모든 연결 시도 실패 (타임아웃)")
+                    return
+            except Exception as e:
+                print(f"❌ 연결 실패 (시도 {attempt + 1}/{retry_count}): {e}")
+                if attempt == retry_count - 1:
+                    print("❌ 모든 연결 시도 실패")
+                    return
+            
+            # 재시도 전 대기 (Azure에서는 더 긴 대기)
+            if attempt < retry_count - 1:
+                wait_time = 5 if is_azure else 2
+                print(f"⏳ {wait_time}초 후 재시도...")
+                await asyncio.sleep(wait_time)
 
     # 메인 루프를 별도 스레드에서 실행
     def run_loop():
