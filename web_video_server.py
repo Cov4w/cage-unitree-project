@@ -814,18 +814,17 @@ def get_robot_current_state():
 if __name__ == "__main__":
     print("🚀 Unitree 웹 비디오 서버 시작!")
     
-    if ARUCO_AVAILABLE and aruco_identity_system:
-        print(f"🔖 ArUco 신원 확인 시스템 준비 완료")
-    else:
-        print(f"⚠️ ArUco 신원 확인 시스템 비활성화됨")
+    # 서버 환경 감지
+    is_server = os.getenv('DEPLOYMENT_ENV') == 'server'
+    host = '0.0.0.0' if is_server else '127.0.0.1'
     
-    if yolo_model:
-        print(f"🔥 화재 감지 시스템 활성화")
+    if is_server:
+        print(f"🌐 서버 모드로 실행 - 외부 접속 허용")
+        print(f"🔗 접속 URL: http://{os.getenv('SERVER_PUBLIC_IP', '0.0.0.0')}:5010")
     else:
-        print(f"⚠️ YOLO 모델 로드 실패 - 화재 감지 비활성화")
+        print(f"🏠 로컬 모드로 실행")
     
-    print(f"🕹️ 조이스틱 제어 시스템 준비")
-    app.run(host='0.0.0.0', port=5010, debug=False)
+    app.run(host=host, port=5010, debug=False)
 
 
 '''
