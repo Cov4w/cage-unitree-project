@@ -100,13 +100,24 @@ class WebRTCDataChannel:
             await self.validaton.handle_err_response(msg)
         
 
-    async def wait_datachannel_open(self, timeout=30.0):
+    async def wait_datachannel_open(self, timeout=60.0):  # 30.0 → 60.0으로 증가
         """Waits for the data channel to open asynchronously."""
+        import os
+        
+        # 환경변수에서 타임아웃 읽기
+        env_timeout = float(os.getenv('DATACHANNEL_TIMEOUT', str(timeout)))
+        actual_timeout = max(timeout, env_timeout)  # 더 큰 값 사용
+        
+        print(f"📡 DataChannel 대기 중... (타임아웃: {actual_timeout}초)")
+        
         try:
-            await asyncio.wait_for(self._wait_for_open(), timeout)
+            await asyncio.wait_for(self._wait_for_open(), actual_timeout)
+            print("✅ DataChannel 열림 성공!")
         except asyncio.TimeoutError:
-            print("Data channel did not open in time")
-            sys.exit(1)
+            print(f"❌ Data channel이 {actual_timeout}초 내에 열리지 않았습니다")
+            print("⚠️  프로그램을 종료하지 않고 재시도합니다...")
+            # sys.exit(1)  # 주석 처리하여 프로그램 종료 방지
+            raise Exception(f"DataChannel timeout after {actual_timeout} seconds")
 
     async def _wait_for_open(self):
         """Internal function that waits for the data channel to be opened."""
@@ -194,5 +205,5 @@ class WebRTCDataChannel:
         # Create an instance of UnifiedLidarDecoder with the specified type
         self.decoder = UnifiedLidarDecoder(decoder_type=decoder_type)
         print(f"Decoder set to: {self.decoder.get_decoder_name()}")
-    
-    
+
+
