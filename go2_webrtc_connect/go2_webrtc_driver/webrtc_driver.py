@@ -256,7 +256,18 @@ class Go2WebRTCConnection:
             print("✅ DataChannel 연결 성공")
         except Exception as e:
             print(f"❌ DataChannel 연결 실패: {e}")
-            raise ConnectionError(f"DataChannel connection failed: {e}")
+    
+            # Azure 환경에서는 PeerConnection 성공 시 DataChannel 없이 진행
+            if is_azure and self.pc.connectionState == "connected":
+                print("🌐 Azure: DataChannel 실패하지만 PeerConnection 성공으로 계속 진행")
+                print("⚠️ 일부 기능(로봇 제어, 센서 데이터)이 제한될 수 있습니다")
+                
+                # DataChannel 관련 기능들을 비활성화
+                self.datachannel = None
+                self.isConnected = True
+                return  # DataChannel 없이 진행
+            else:
+                raise ConnectionError(f"DataChannel connection failed: {e}")
     
     async def _wait_for_ice_complete(self):
         """ICE 수집 완료까지 대기"""
