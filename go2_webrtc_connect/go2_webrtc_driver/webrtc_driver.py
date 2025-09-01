@@ -93,17 +93,24 @@ class Go2WebRTCConnection:
             else:
                 raise ValueError("Invalid TURN server information")
         
-        # Azure 환경 최적화
+        # Azure 환경 감지
         is_azure = os.getenv('DEPLOYMENT_ENV') == 'server'
         if is_azure:
-            # Azure 환경용 추가 설정
-            configuration = RTCConfiguration(
-                iceServers=ice_servers,
-                iceTransportPolicy="all",  # 모든 네트워크 경로 허용
-                bundlePolicy="balanced"    # 네트워크 효율성 최적화
-            )
-        else:
-            configuration = RTCConfiguration(iceServers=ice_servers)
+            print("🌐 Azure 환경용 WebRTC 설정 적용")
+            print(f"🔗 사용할 ICE 서버 개수: {len(ice_servers)}개")
+            
+            # Azure 환경에서 더 많은 STUN 서버 추가 (선택사항)
+            additional_stun = [
+                "stun:stun2.l.google.com:19302",
+                "stun:stun3.l.google.com:19302"
+            ]
+            for stun_url in additional_stun:
+                ice_servers.append(RTCIceServer(urls=[stun_url]))
+            
+            print(f"🔗 Azure 최적화 후 ICE 서버 개수: {len(ice_servers)}개")
+        
+        # aiortc에서 지원하는 매개변수만 사용
+        configuration = RTCConfiguration(iceServers=ice_servers)
         
         return configuration
 
