@@ -3,6 +3,8 @@ import json
 import logging
 import struct
 import sys
+import os
+import time
 from .msgs.pub_sub import WebRTCDataChannelPubSub
 from .lidar.lidar_decoder_unified import UnifiedLidarDecoder
 from .msgs.heartbeat import WebRTCDataChannelHeartBeat
@@ -60,64 +62,119 @@ class WebRTCDataChannel:
         # Event handler for data channel messages
         @self.channel.on("message")
         async def on_message(message):
+            is_azure = os.getenv('DEPLOYMENT_ENV') == 'server'
+            
+            if is_azure:
+                print(f"📨 Azure: DataChannel 메시지 수신 - 타입: {type(message)}, 크기: {len(message) if hasattr(message, '__len__') else 'N/A'}")
+            
             logging.info("Received message on data channel: %s", message)
             try:
-            
                 # Check if the message is not empty
                 if not message:
+                    if is_azure:
+                        print("⚠️ Azure: 빈 메시지 수신")
                     return
 
                 # Determine how to parse the 'data' field
                 if isinstance(message, str):
                     parsed_data = json.loads(message)
+                    if is_azure:
+                        print(f"📨 Azure: JSON 메시지 파싱 완료 - type: {parsed_data.get('type', 'unknown')}")
                 elif isinstance(message, bytes):
                     parsed_data = self.deal_array_buffer(message)
+                    if is_azure:
+                        print(f"📨 Azure: Binary 메시지 파싱 완료 - type: {parsed_data.get('type', 'unknown')}")
                 
                 # Resolve any pending futures or callbacks associated with this message
                 self.pub_sub.run_resolve(parsed_data)
 
                 # Handle the response
                 await self.handle_response(parsed_data)
-        
-            except json.JSONDecodeError:
+
+            except json.JSONDecodeError as e:
+                print(f"❌ Azure: JSON 디코딩 실패: {e}")
                 logging.error("Failed to decode JSON message: %s", message, exc_info=True)
             except Exception as error:
+                print(f"❌ Azure: 메시지 처리 중 오류: {error}")
                 logging.error("Error processing WebRTC data", exc_info=True)
 
 
     async def handle_response(self, msg: dict):
-        msg_type = msg["type"]
+        is_azure = os.getenv('DEPLOYMENT_ENV') == 'server'
+        
+        msg_type = msg.get("type", "unknown")
+        
+        if is_azure:
+            print(f"🔄 Azure: 메시지 처리 중 - type: {msg_type}")
 
         if msg_type == DATA_CHANNEL_TYPE["VALIDATION"]:
+            if is_azure:
+                print("✅ Azure: VALIDATION 메시지 수신 - 처리 시작")
             await self.validaton.handle_response(msg)
+            if is_azure:
+                print("✅ Azure: VALIDATION 메시지 처리 완료")
         elif msg_type == DATA_CHANNEL_TYPE["RTC_INNER_REQ"]:
+            if is_azure:
+                print("🔄 Azure: RTC_INNER_REQ 메시지 처리")
             self.rtc_inner_req.handle_response(msg)
         elif msg_type == DATA_CHANNEL_TYPE["HEARTBEAT"]:
+            if is_azure:
+                print("💓 Azure: HEARTBEAT 메시지 처리")
             self.heartbeat.handle_response(msg)
         elif msg_type in {DATA_CHANNEL_TYPE["ERRORS"], DATA_CHANNEL_TYPE["ADD_ERROR"], DATA_CHANNEL_TYPE["RM_ERROR"]}:
+            if is_azure:
+                print(f"⚠️ Azure: ERROR 메시지 처리 - {msg_type}")
             handle_error(msg)
         elif msg_type == DATA_CHANNEL_TYPE["ERR"]:
+            if is_azure:
+                print("❌ Azure: ERR 메시지 처리")
             await self.validaton.handle_err_response(msg)
-        
+        else:
+            if is_azure:
+                print(f"❓ Azure: 알 수 없는 메시지 타입: {msg_type}")
 
-    async def wait_datachannel_open(self, timeout=60.0):  # 30.0 → 60.0으로 증가
-        """Waits for the data channel to open asynchronously."""
-        import os
-        
+
+    async def wait_datachannel_open(self, timeout=60.0):
+        """Waits for the data channel to open asynchronously."""        
         # 환경변수에서 타임아웃 읽기
         env_timeout = float(os.getenv('DATACHANNEL_TIMEOUT', str(timeout)))
-        actual_timeout = max(timeout, env_timeout)  # 더 큰 값 사용
+        actual_timeout = max(timeout, env_timeout)
         
         print(f"📡 DataChannel 대기 중... (타임아웃: {actual_timeout}초)")
+        print(f"🔍 초기 DataChannel 상태:")
+        print(f"   - channel.readyState: {self.channel.readyState if self.channel else 'None'}")
+        print(f"   - data_channel_opened: {self.data_channel_opened}")
+        
+        start_time = time.time()
+        last_log_time = start_time
         
         try:
-            await asyncio.wait_for(self._wait_for_open(), actual_timeout)
+            while not self.data_channel_opened:
+                current_time = time.time()
+                elapsed = current_time - start_time
+                
+                # 5초마다 상태 로깅
+                if current_time - last_log_time >= 5:
+                    print(f"⏳ DataChannel 대기 중... ({int(elapsed)}/{int(actual_timeout)}초)")
+                    print(f"   - channel.readyState: {self.channel.readyState if self.channel else 'None'}")
+                    print(f"   - data_channel_opened: {self.data_channel_opened}")
+                    print(f"   - validation 상태: {hasattr(self.validaton, 'validated') and self.validaton.validated}")
+                    last_log_time = current_time
+                
+                if elapsed >= actual_timeout:
+                    print(f"❌ Data channel이 {actual_timeout}초 내에 열리지 않았습니다")
+                    print(f"🔍 최종 상태:")
+                    print(f"   - channel.readyState: {self.channel.readyState if self.channel else 'None'}")
+                    print(f"   - data_channel_opened: {self.data_channel_opened}")
+                    raise Exception(f"DataChannel timeout after {actual_timeout} seconds")
+                
+                await asyncio.sleep(0.1)
+                
             print("✅ DataChannel 열림 성공!")
-        except asyncio.TimeoutError:
-            print(f"❌ Data channel이 {actual_timeout}초 내에 열리지 않았습니다")
-            print("⚠️  프로그램을 종료하지 않고 재시도합니다...")
-            # sys.exit(1)  # 주석 처리하여 프로그램 종료 방지
-            raise Exception(f"DataChannel timeout after {actual_timeout} seconds")
+            
+        except Exception as e:
+            print(f"❌ DataChannel 대기 중 오류: {e}")
+            raise
 
     async def _wait_for_open(self):
         """Internal function that waits for the data channel to be opened."""
