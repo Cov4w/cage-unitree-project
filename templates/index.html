@@ -228,6 +228,24 @@
             <button id="exit-btn" class="btn btn-danger" style="display:none;">EXIT</button>
         </div>
 
+        <!-- 🆕 YOLO 제어 섹션 추가 -->
+        <div class="control-section full-width-section">
+            <h3>🎯 YOLO 감지 시스템</h3>
+            <p style="margin: 5px 0; color: #666;">
+                🔥 <strong>기능:</strong> 화재 및 인물 감지 | ArUco 스캔 시 자동 비활성화 | 수동 토글 가능
+            </p>
+            <div class="status-display" id="yolo-control-status">
+                <span class="status-indicator status-on" id="yolo-indicator"></span>
+                <strong>YOLO 상태:</strong> <span id="yolo-control-text">활성화</span>
+            </div>
+            <button onclick="toggleYolo()" class="btn btn-warning" id="yolo-toggle-btn">
+                🎯 YOLO 비활성화
+            </button>
+            <p style="margin: 5px 0; color: #666; font-size: 0.9em;">
+                💡 <strong>참고:</strong> ArUco 스캔 중에는 자동으로 YOLO가 비활성화되며, 스캔 완료 후 자동 재활성화됩니다.
+            </p>
+        </div>
+
         <!-- ArUco 신원 확인 시스템 (전체 폭) -->
         <div class="control-section full-width-section">
             <h3>🔖 ArUco 신원 확인 시스템</h3>
@@ -339,6 +357,47 @@
 
         function clearLog() {
             document.getElementById('log-area').innerHTML = '로그가 지워졌습니다...\n';
+        }
+
+        // 🆕 YOLO 토글 함수 추가
+        function toggleYolo() {
+            fetch('/toggle_yolo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    addLog(`🎯 ${data.message}`);
+                    updateYoloControlStatus(data.yolo_active);
+                } else {
+                    addLog('❌ YOLO 토글 실패: ' + data.message);
+                }
+            })
+            .catch(error => {
+                addLog('❌ YOLO 토글 통신 오류: ' + error);
+            });
+        }
+
+        // 🆕 YOLO 제어 상태 업데이트 함수
+        function updateYoloControlStatus(yoloActive) {
+            const indicator = document.getElementById('yolo-indicator');
+            const statusText = document.getElementById('yolo-control-text');
+            const toggleBtn = document.getElementById('yolo-toggle-btn');
+            
+            // 상태 표시 업데이트
+            indicator.className = 'status-indicator';
+            if (yoloActive) {
+                indicator.classList.add('status-on');
+                statusText.textContent = '활성화';
+                toggleBtn.textContent = '🎯 YOLO 비활성화';
+                toggleBtn.className = 'btn btn-warning';
+            } else {
+                indicator.classList.add('status-off');
+                statusText.textContent = '비활성화';
+                toggleBtn.textContent = '🎯 YOLO 활성화';
+                toggleBtn.className = 'btn btn-success';
+            }
         }
 
         // 🆕 음성 관련 JavaScript 함수들 추가
@@ -507,6 +566,8 @@
                     addLog(`📋 최대 ${data.max_attempts}번 시도, ${data.timeout}초 타임아웃`);
                     addLog(`🎯 YOLO 모델 비활성화됨`);
                     updateArUcoStatus('scanning', 'ArUco 스캔 중...');
+                    // 🆕 YOLO 제어 상태도 업데이트
+                    updateYoloControlStatus(false);
                     startStatusMonitoring();
                 } else {
                     addLog('❌ ArUco 스캔 시작 실패: ' + data.message);
@@ -536,6 +597,8 @@
                     }
                     
                     updateArUcoStatus('off', '대기 중 (복구 완료)');
+                    // 🆕 YOLO 제어 상태도 업데이트
+                    updateYoloControlStatus(true);
                     
                     // 3초 후 상태 메시지 정리
                     setTimeout(() => {
@@ -582,7 +645,7 @@
             statusText.textContent = text;
         }
 
-        // 🔧 상태 모니터링에 음성 상태 추가
+        // 🔧 상태 모니터링에 YOLO 상태 추가
         function startStatusMonitoring() {
             if (statusMonitorId) return;
             
@@ -591,8 +654,11 @@
                 fetch('/aruco_scan_status')
                 .then(response => response.json())
                 .then(data => {
-                    // YOLO 상태 업데이트
+                    // YOLO 상태 업데이트 (시스템 상태 영역)
                     document.getElementById('yolo-status').textContent = data.yolo_active ? '활성화' : '비활성화';
+                    
+                    // 🆕 YOLO 제어 상태도 업데이트
+                    updateYoloControlStatus(data.yolo_active);
                     
                     // ArUco 모드 업데이트
                     if (data.aruco_scan_mode) {
@@ -729,6 +795,9 @@
         window.onload = function() {
             addLog('🌟 시스템이 준비되었습니다.');
             addLog('📋 START CONTROL을 눌러 시작하세요.');
+            
+            // 🆕 페이지 로드 시 YOLO 상태 초기화
+            updateYoloControlStatus(true);
             
             // 🆕 페이지 로드 시 음성 상태 한 번 확인
             setTimeout(checkVoiceStatus, 1000);

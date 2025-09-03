@@ -691,6 +691,41 @@ def aruco_scan_status():
         'retry_interval': ARUCO_RETRY_INTERVAL
     })
 
+# 🆕 YOLO 토글 엔드포인트 (ArUco 스캔과 동일한 단순 방식)
+@app.route('/toggle_yolo', methods=['POST'])
+def toggle_yolo():
+    """YOLO 활성화/비활성화 토글 - ArUco 스캔과 동일한 단순 방식"""
+    global yolo_active
+    
+    try:
+        # 🔧 현재 상태 저장
+        previous_state = yolo_active
+        
+        # 🔧 상태 토글 (단순하게)
+        yolo_active = not yolo_active
+        
+        status_text = "활성화" if yolo_active else "비활성화"
+        print(f"🎯 YOLO 상태 변경: {previous_state} → {yolo_active} ({status_text})")
+        
+        # 🔧 ArUco 스캔과 동일한 방식의 응답
+        response_data = {
+            'status': 'success',
+            'yolo_active': yolo_active,
+            'message': f'YOLO가 {status_text}되었습니다'
+        }
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        print(f"❌ YOLO 토글 처리 오류: {e}")
+        
+        return jsonify({
+            'status': 'error',
+            'message': f'YOLO 토글 처리 실패: {str(e)}',
+            'yolo_active': yolo_active
+        })
+
+
 # 🆕 간소화된 Discord 음성 연동 관련 엔드포인트들
 
 @app.route('/voice_connect', methods=['POST'])
