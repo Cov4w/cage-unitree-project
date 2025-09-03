@@ -1,5 +1,6 @@
 import cv2
 import time
+import numpy as np
 from flask import Flask, Response, render_template, request, jsonify
 from multiprocessing import Queue
 from webrtc_producer import start_webrtc, send_command, ensure_normal_mode_once
@@ -427,43 +428,89 @@ def check_fire_detection(current_boxes):
         fire_detection_start_time = None
         fire_last_alert_time = None
 
-# generate() 함수에 추가
+# generate() 함수에서 YOLO 로직 완전 복원
 def generate():
+    """비디오 스트림 생성 - 해상도 제어 + 완전한 YOLO 로직"""
     last_detect_time = 0
     last_boxes = []
-    last_aruco_markers = []  # ArUco 마커 결과 저장용
+    last_aruco_markers = []
+    
+    # 🆕 목표 해상도 설정
+    TARGET_WIDTH = 640
+    TARGET_HEIGHT = 360
+    JPEG_QUALITY = 85  # JPEG 품질 (1-100)
     
     while True:
         if not frame_queue.empty():
             img = frame_queue.get()
             now = time.time()
             
-            # YOLO 감지 (yolo_active가 True일 때만)
-            if yolo_active and now - last_detect_time > 1.0:
-                results = yolo_model(img)
-                last_boxes = []
+            # 🆕 이미지 해상도 확인 및 조정
+            original_height, original_width = img.shape[:2]
+            
+            if original_width != TARGET_WIDTH or original_height != TARGET_HEIGHT:
+                # 비율 유지하면서 리사이즈
+                aspect_ratio = original_width / original_height
+                target_aspect_ratio = TARGET_WIDTH / TARGET_HEIGHT
                 
-                for result in results:
-                    boxes = result.boxes
-                    if boxes is not None:
-                        for box in boxes:
-                            cls = int(box.cls[0])
-                            label = yolo_model.names[cls]
-                            if label in ["person", "fire"]:
-                                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                                confidence = float(box.conf[0])
-                                last_boxes.append((x1, y1, x2, y2, label, confidence))
+                if aspect_ratio > target_aspect_ratio:
+                    # 가로가 더 긴 경우
+                    new_width = TARGET_WIDTH
+                    new_height = int(TARGET_WIDTH / aspect_ratio)
+                else:
+                    # 세로가 더 긴 경우
+                    new_height = TARGET_HEIGHT
+                    new_width = int(TARGET_HEIGHT * aspect_ratio)
                 
-                check_fire_detection(last_boxes)
-                last_detect_time = now
+                # 이미지 리사이즈
+                img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+                
+                # 중앙 정렬을 위한 패딩 (필요한 경우)
+                if new_width != TARGET_WIDTH or new_height != TARGET_HEIGHT:
+                    # 검은색 배경에 중앙 정렬
+                    pad_img = np.zeros((TARGET_HEIGHT, TARGET_WIDTH, 3), dtype=np.uint8)
+                    start_y = (TARGET_HEIGHT - new_height) // 2
+                    start_x = (TARGET_WIDTH - new_width) // 2
+                    pad_img[start_y:start_y+new_height, start_x:start_x+new_width] = img
+                    img = pad_img
+                
+                print(f"📺 해상도 조정: {original_width}x{original_height} → {TARGET_WIDTH}x{TARGET_HEIGHT}")
+            
+            # 🔧 YOLO 감지 (완전한 기존 로직 복원)
+            if yolo_active and yolo_model and now - last_detect_time > 1.0:
+                try:
+                    # YOLO 추론 실행
+                    results = yolo_model(img)
+                    last_boxes = []
+                    
+                    for result in results:
+                        boxes = result.boxes
+                        if boxes is not None:
+                            for box in boxes:
+                                cls = int(box.cls[0])
+                                label = yolo_model.names[cls]
+                                if label in ["person", "fire"]:
+                                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                                    confidence = float(box.conf[0])
+                                    last_boxes.append((x1, y1, x2, y2, label, confidence))
+                    
+                    # 🔥 Fire 감지 체크 (기존 로직 완전 유지)
+                    check_fire_detection(last_boxes)
+                    last_detect_time = now
+                    
+                except Exception as e:
+                    print(f"❌ YOLO 처리 오류: {e}")
+                    last_boxes = []
+                    
             elif not yolo_active:
+                # YOLO 비활성화 시 빈 배열
                 last_boxes = []
             
-            # ArUco 신원 마커 스캔
+            # 🔖 ArUco 신원 마커 스캔 (기존 로직 완전 유지)
             last_aruco_markers = process_aruco_identity_markers(img)
             
-            # YOLO 결과 표시
-            if yolo_active:
+            # 🎯 YOLO 결과 표시 (기존 로직 완전 복원)
+            if yolo_active and last_boxes:
                 for box_info in last_boxes:
                     if len(box_info) == 6:
                         x1, y1, x2, y2, label, confidence = box_info
@@ -472,24 +519,27 @@ def generate():
                         label = "person"
                         confidence = 0.0
                     
+                    # 🔥 Fire 감지 시 색상 및 텍스트
                     if label == "fire":
-                        color = (0, 0, 255)
+                        color = (0, 0, 255)  # 빨간색
                         display_text = f"FIRE {confidence:.2f}"
                         
+                        # 🔥 Fire 연속 감지 시 깜빡임 효과
                         if confidence >= FIRE_CONFIDENCE_THRESHOLD and fire_continuous_detection:
-                            if int(time.time() * 2) % 2:
-                                color = (0, 255, 255)
-                            display_text = f"FIRE {confidence:.2f}"
+                            if int(time.time() * 2) % 2:  # 0.5초마다 깜빡임
+                                color = (0, 255, 255)  # 노란색으로 깜빡임
+                            display_text = f"🚨 FIRE {confidence:.2f} 🚨"
                             
                     elif label == "person":
-                        color = (0, 255, 0)
+                        color = (0, 255, 0)  # 초록색
                         display_text = f"PERSON {confidence:.2f}"
                     
+                    # 바운딩 박스 및 텍스트 그리기
                     cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(img, display_text, (x1, y1 - 10), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
             
-            # ArUco 신원 마커 표시
+            # 🔖 ArUco 신원 마커 표시 (기존 로직 완전 유지)
             for marker_data in last_aruco_markers:
                 marker_id = marker_data['marker_id']
                 x1, y1, x2, y2 = marker_data['bbox']
@@ -506,29 +556,30 @@ def generate():
                     color = (0, 255, 255)  # 노란색
                     display_text = f"ID{marker_id}: Unknown"
                 
+                # ArUco 마커 표시
                 cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
                 cv2.circle(img, center, 5, color, -1)
                 cv2.putText(img, display_text, (x1, y1 - 10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             
-            # Fire 감지 상태 표시
+            # 🔥 Fire 감지 상태 표시 (기존 로직 완전 복원)
             if yolo_active and fire_continuous_detection and fire_detection_start_time:
                 detection_duration = time.time() - fire_detection_start_time
-                status_text = f"Fire detecting..: {detection_duration:.1f}s"
+                status_text = f"Fire detecting: {detection_duration:.1f}s"
                 
                 if detection_duration >= FIRE_DETECTION_THRESHOLD:
-                    status_color = (0, 0, 255)
+                    status_color = (0, 0, 255)  # 빨간색
                     if fire_last_alert_time is not None:
                         elapsed_alert_time = time.time() - fire_last_alert_time
                         if elapsed_alert_time < FIRE_ALERT_INTERVAL:
-                            status_text += f" ready for alarm ({elapsed_alert_time:.1f}s)"
+                            status_text += f" (next alarm in {FIRE_ALERT_INTERVAL - elapsed_alert_time:.1f}s)"
                 else:
-                    status_color = (0, 165, 255)
+                    status_color = (0, 165, 255)  # 주황색
                 
                 cv2.putText(img, status_text, (10, 30), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
             
-            # ArUco 스캔 상태 표시
+            # 🔖 ArUco 스캔 상태 표시 (기존 로직 완전 유지)
             if aruco_scan_mode and aruco_scan_start_time:
                 scan_duration = time.time() - aruco_scan_start_time
                 aruco_status_text = f"ArUco scanning: #{aruco_scan_attempts}/{MAX_ARUCO_ATTEMPTS} ({scan_duration:.1f}s)"
@@ -537,15 +588,19 @@ def generate():
                 cv2.putText(img, aruco_status_text, (10, 60), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, aruco_status_color, 2)
             
-            # YOLO 상태 표시
+            # 🎯 YOLO 상태 표시 (기존 로직 완전 유지)
             yolo_status_text = f"YOLO: {'ON' if yolo_active else 'OFF'}"
             yolo_status_color = (0, 255, 0) if yolo_active else (0, 0, 255)
             cv2.putText(img, yolo_status_text, (10, 90), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, yolo_status_color, 2)
             
-            ret, jpeg = cv2.imencode('.jpg', img)
+            # 🆕 JPEG 인코딩 품질 제어
+            encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+            ret, jpeg = cv2.imencode('.jpg', img, encode_params)
+            
             if not ret:
                 continue
+                
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
         else:
