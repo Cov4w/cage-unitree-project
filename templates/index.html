@@ -35,15 +35,15 @@
         
         .video-section.expanded {
             /* START CONTROL 후 비디오가 왼쪽으로 이동 */
-            flex: 0 0 600px; /* 고정 너비 */
+            flex: 0 0 640px; /* 고정 너비 */
             margin-bottom: 0;
         }
         
         .video-stream {
             border: 2px solid #ddd;
             border-radius: 10px;
-            max-width: 100%;
-            height: auto;
+            width: 640px !important;        /* 강제 고정 */
+            height: 360px !important;       /* 강제 고정 */
         }
         
         /* 🆕 제어 패널이 오른쪽에 표시될 영역 */
@@ -257,7 +257,7 @@
             <!-- 비디오 스트림 섹션 -->
             <div class="video-section" id="video-section">
                 <h2>📹 실시간 비디오 스트림</h2>
-                <img src="{{ url_for('video_feed') }}" class="video-stream" width="640" height="360" />
+                <img src="{{ url_for('video_feed') }}" class="video-stream" width=640px height=360px />
             </div>
 
             <!-- 🆕 제어 사이드바 (START CONTROL 후에 표시) -->
