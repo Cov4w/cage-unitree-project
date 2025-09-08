@@ -364,11 +364,12 @@
                         연결 상태: 대기 중
                     </div>
                 </div>
+                
             </div>
 
             <!-- 🆕 제어 사이드바 (START CONTROL 후에 표시) -->
             <div class="control-sidebar" id="control-sidebar">
-                <!-- 조이스틱 제어 -->
+                <!-- 🕹️ 조이스틱 제어 (첫 번째 위치) -->
                 <div class="control-section">
                     <h3>🕹️ 조이스틱 제어</h3>
                     <div id="joystick-zone"></div>
@@ -376,7 +377,7 @@
                         조이스틱을 드래그하여 로봇을 움직이세요
                     </p>
                 </div>
-
+                
                 <!-- 기본 동작 버튼들 -->
                 <div class="control-section">
                     <h3>🤖 기본 동작</h3>
@@ -751,7 +752,29 @@
             statusText.textContent = text;
         }
 
-        // 🔧 상태 모니터링에 YOLO 상태 추가
+        // 🆕 LIDAR 상태 확인 (주기적)
+        function checkLidarStatus() {
+            fetch('/lidar_status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.lidar_enabled && data.connection_healthy) {
+                    if (lidarViewMode) {
+                        updateLidarStatus('connected', `활성화: ${data.message_count}개 메시지`);
+                    } else {
+                        updateLidarStatus('connected', `백그라운드: ${data.message_count}개 메시지`);
+                    }
+                } else if (data.lidar_enabled && !data.connection_healthy) {
+                    updateLidarStatus('error', `연결 불안정: ${data.connection_state}`);
+                } else {
+                    updateLidarStatus('connecting', '대기 중');
+                }
+            })
+            .catch(error => {
+                console.warn('LIDAR 상태 확인 실패:', error);
+            });
+        }
+        
+        // 🔧 상태 모니터링에 LIDAR 상태 확인 추가
         function startStatusMonitoring() {
             if (statusMonitorId) return;
             
@@ -784,6 +807,9 @@
                 
                 // 🆕 음성 상태 확인 추가
                 checkVoiceStatus();
+                
+                // 🆕 LIDAR 상태 확인 추가
+                checkLidarStatus();
                 
             }, 3000); // 3초마다 상태 확인
         }
@@ -981,7 +1007,7 @@
             });
         }
         
-        // 🆕 LIDAR 데이터 업데이트
+        // 🆕 LIDAR 데이터 업데이트 - plot_lidar_stream.py와 동일한 색상 방식
         function updateLidarPoints(pointsData, scalars) {
             if (!lidarScene) return;
             
@@ -997,26 +1023,35 @@
             const positions = new Float32Array(pointsData.flat());
             const colors = new Float32Array(pointsData.length * 3);
             
-            // 거리 기반 색상 계산
+            // 🔧 plot_lidar_stream.py와 동일한 색상 계산
+            // 최대 스칼라 값 찾기 (정규화를 위해)
+            const maxScalar = Math.max(...scalars);
+            
             for (let i = 0; i < pointsData.length; i++) {
                 const scalar = scalars[i] || 0;
-                const normalizedScalar = Math.min(1, scalar / 10); // 10m를 최대값으로 정규화
+                const normalizedScalar = maxScalar > 0 ? scalar / maxScalar : 0;
                 
-                // 거리에 따른 색상 (파란색 -> 초록색 -> 빨간색)
-                colors[i * 3] = normalizedScalar;     // R
-                colors[i * 3 + 1] = 1 - normalizedScalar; // G
-                colors[i * 3 + 2] = 0.2;              // B
+                // 🔧 plot_lidar_stream.py와 동일한 HSL 색상 (거리별 색상 스펙트럼)
+                // Hue: 0.7 * normalizedScalar (파란색 0.7에서 빨간색 0.0으로)
+                // Saturation: 1.0 (완전 포화)
+                // Lightness: 0.5 (중간 밝기)
+                const color = new THREE.Color();
+                color.setHSL(normalizedScalar * 0.7, 1.0, 0.5);
+                
+                colors[i * 3] = color.r;      // R
+                colors[i * 3 + 1] = color.g;  // G
+                colors[i * 3 + 2] = color.b;  // B
             }
             
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
             
-            // 포인트 머티리얼 생성
+            // 🔧 plot_lidar_stream.py와 동일한 포인트 머티리얼 설정
             const material = new THREE.PointsMaterial({
-                size: 0.05,
+                size: 0.3,  // plot_lidar_stream.py와 동일한 크기
                 vertexColors: true,
-                transparent: true,
-                opacity: 0.8
+                transparent: false,  // 더 선명한 색상을 위해
+                opacity: 1.0  // 완전 불투명
             });
             
             // 포인트 메시 생성
@@ -1034,13 +1069,16 @@
             requestAnimationFrame(animateLidar);
         }
         
-        // 🆕 뷰 토글 함수
+        // 🆕 뷰 토글 함수 - 완전한 연결/해제 방식
         function toggleView() {
+            const previousMode = lidarViewMode;
             lidarViewMode = !lidarViewMode;
             
             const videoStream = document.getElementById('video-stream');
             const lidarContainer = document.getElementById('lidar-container');
             const toggleBtn = document.getElementById('toggle-view-btn');
+            
+            console.log(`🔄 뷰 전환: ${previousMode ? 'LIDAR' : 'VIDEO'} → ${lidarViewMode ? 'LIDAR' : 'VIDEO'}`);
             
             if (lidarViewMode) {
                 // LIDAR 뷰로 전환
@@ -1049,18 +1087,9 @@
                 toggleBtn.textContent = '📹 비디오로 전환';
                 toggleBtn.classList.add('lidar-mode');
                 
-                // LIDAR 스트림 시작
-                fetch('/toggle_lidar_view', { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log('LIDAR 뷰 전환:', data);
-                        updateLidarStatus('connected', 'LIDAR 연결됨');
-                    })
-                    .catch(error => {
-                        console.error('LIDAR 전환 오류:', error);
-                        updateLidarStatus('error', '연결 오류');
-                    });
-                    
+                addLog('🎯 LIDAR 뷰로 전환 - LIDAR 연결 시작');
+                updateLidarStatus('connecting', 'LIDAR 연결 중...');
+                
             } else {
                 // 비디오 뷰로 전환
                 videoStream.style.display = 'block';
@@ -1068,14 +1097,73 @@
                 toggleBtn.textContent = '🎯 LIDAR 뷰로 전환';
                 toggleBtn.classList.remove('lidar-mode');
                 
-                // 비디오 뷰로 전환
-                fetch('/toggle_lidar_view', { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log('비디오 뷰 전환:', data);
-                        updateLidarStatus('connecting', '대기 중');
-                    });
+                addLog('📹 비디오 뷰로 전환 - LIDAR 연결 해제 중');
+                updateLidarStatus('connecting', 'LIDAR 연결 해제 중...');
             }
+            
+            // 🔧 서버에 뷰 전환 알림 (완전한 연결/해제 방식)
+            fetch('/toggle_lidar_view', { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log('✅ 뷰 전환 성공:', data.message);
+                    addLog(`✅ ${data.message}`);
+                    
+                    // 액션에 따라 상태 업데이트
+                    switch(data.action) {
+                        case 'lidar_connected':
+                            updateLidarStatus('connected', 'LIDAR 연결됨 - 데이터 수신 중');
+                            break;
+                        case 'already_connected':
+                            updateLidarStatus('connected', 'LIDAR 이미 연결됨');
+                            break;
+                        case 'lidar_disconnected':
+                            updateLidarStatus('connecting', 'LIDAR 연결 해제됨');
+                            // 3초 후 대기 상태로 변경
+                            setTimeout(() => {
+                                updateLidarStatus('connecting', '대기 중');
+                            }, 3000);
+                            break;
+                        case 'already_disconnected':
+                            updateLidarStatus('connecting', '대기 중');
+                            break;
+                        case 'connection_failed':
+                            updateLidarStatus('error', 'LIDAR 연결 실패');
+                            break;
+                        case 'disconnect_warning':
+                            updateLidarStatus('error', 'LIDAR 해제 실패');
+                            break;
+                        default:
+                            updateLidarStatus('connecting', data.message);
+                    }
+                } else {
+                    console.error('❌ 뷰 전환 실패:', data.error);
+                    addLog(`❌ 뷰 전환 실패: ${data.error}`);
+                    updateLidarStatus('error', '전환 실패');
+                }
+            })
+            .catch(error => {
+                console.error('❌ 뷰 전환 통신 오류:', error);
+                addLog(`❌ 뷰 전환 통신 오류: ${error}`);
+                updateLidarStatus('error', '통신 오류');
+                
+                // 통신 오류 시 UI 상태 복원
+                lidarViewMode = previousMode;
+                if (lidarViewMode) {
+                    videoStream.style.display = 'none';
+                    lidarContainer.style.display = 'block';
+                    toggleBtn.textContent = '📹 비디오로 전환';
+                    toggleBtn.classList.add('lidar-mode');
+                } else {
+                    videoStream.style.display = 'block';
+                    lidarContainer.style.display = 'none';
+                    toggleBtn.textContent = '🎯 LIDAR 뷰로 전환';
+                    toggleBtn.classList.remove('lidar-mode');
+                }
+            });
         }
         
         // 🆕 LIDAR 상태 업데이트
@@ -1102,14 +1190,17 @@
             
             socket.on('lidar_data', function(data) {
                 if (data.points && data.scalars) {
-                    updateLidarPoints(data.points, data.scalars);
-                    updateLidarStatus('connected', `${data.points.length}개 포인트`);
-                    
-                    // 🔧 백그라운드에서도 처리하되, LIDAR 뷰일 때만 화면 업데이트
+                    // LIDAR 모드일 때만 실제 데이터 처리
                     if (lidarViewMode) {
-                        // LIDAR 뷰 모드일 때만 시각적 업데이트
-                        console.log(`📊 LIDAR 포인트 업데이트: ${data.points.length}개`);
+                        updateLidarPoints(data.points, data.scalars);
+                        updateLidarStatus('connected', `실시간: ${data.points.length}개 포인트`);
+                        console.log(`🎯 LIDAR 데이터 처리됨: ${data.points.length}개 포인트`);
+                    } else {
+                        // 비디오 모드에서는 데이터를 받더라도 처리하지 않음
+                        console.log(`📹 비디오 모드 - LIDAR 데이터 무시: ${data.points.length}개 포인트`);
                     }
+                } else {
+                    console.warn('⚠️ 유효하지 않은 LIDAR 데이터 수신됨');
                 }
             });
             

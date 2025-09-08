@@ -943,7 +943,7 @@ async def lidar_callback_task(message):
     global message_count, minYValue, maxYValue
     
     try:
-        # 🔧 LIDAR 활성화 상태만 체크 (뷰 모드와 무관하게 데이터 처리)
+        # 🔧 LIDAR 활성화 상태만 체크
         if not lidar_enabled:
             return
             
@@ -1012,13 +1012,16 @@ async def lidar_callback_task(message):
         # 🔧 거리 기반 색상 스칼라 (plot_lidar_stream.py와 동일)
         scalars = np.linalg.norm(offset_points, axis=1)
 
-        # 🔧 SocketIO로 LIDAR 데이터 전송 (plot_lidar_stream.py와 동일)
-        socketio.emit("lidar_data", {
-            "points": offset_points.tolist(),
-            "scalars": scalars.tolist(),
-            "center": {"x": center_x, "y": center_y, "z": center_z}
-        })
-        print(f"📤 SocketIO로 {len(offset_points)}개 포인트 전송됨")
+        # 🔧 SocketIO로 LIDAR 데이터 전송 (LIDAR 모드일 때만)
+        if lidar_view_mode:
+            socketio.emit("lidar_data", {
+                "points": offset_points.tolist(),
+                "scalars": scalars.tolist(),
+                "center": {"x": center_x, "y": center_y, "z": center_z}
+            })
+            print(f"📤 SocketIO로 {len(offset_points)}개 포인트 전송됨")
+        else:
+            print(f"⏸️ 비디오 모드 - LIDAR 데이터 처리만 수행: {len(offset_points)}개 포인트")
 
     except Exception as e:
         print(f"❌ LIDAR 콜백 오류: {e}")
@@ -1204,55 +1207,91 @@ def stop_lidar_stream():
 # 🔄 LIDAR 뷰 토글 라우트
 @app.route('/toggle_lidar_view', methods=['POST'])
 def toggle_lidar_view():
-    """비디오와 LIDAR 뷰 간 전환 - 자동 재연결 기능 포함"""
+    """비디오와 LIDAR 뷰 간 전환 - 완전한 연결/해제 방식"""
     global lidar_view_mode
     
     try:
+        previous_mode = lidar_view_mode
         lidar_view_mode = not lidar_view_mode
-        print(f"🔄 뷰 모드 전환: {'LIDAR' if lidar_view_mode else '비디오'}")
+        print(f"🔄 뷰 모드 전환: {previous_mode} → {'LIDAR' if lidar_view_mode else '비디오'}")
         
         if lidar_view_mode:
-            # LIDAR 뷰로 전환 시 LIDAR 스트림 시작/재시작
+            # LIDAR 뷰로 전환 시 - 연결 시작
+            print("🎯 LIDAR 뷰로 전환 - LIDAR 연결 시작")
+            
             if not lidar_enabled:
-                print("🚀 LIDAR 뷰 전환: LIDAR 스트림 시작")
-                start_lidar_stream()
-            else:
-                # 이미 실행 중이지만 연결 상태 확인
-                print("🔍 LIDAR 스트림 상태 확인 중...")
-                
-                # 최근 메시지 수신 여부 확인
-                global message_count
-                old_count = message_count
-                import time
-                time.sleep(2)
-                
-                if message_count == old_count:
-                    print("⚠️ LIDAR 데이터 수신 중단 감지 - 재시작 중...")
-                    stop_lidar_stream()
-                    time.sleep(1)
-                    start_lidar_stream()
+                print("🚀 LIDAR 스트림 시작")
+                if start_lidar_stream():
                     return jsonify({
                         'success': True,
                         'lidar_view_mode': lidar_view_mode,
                         'lidar_enabled': True,
-                        'message': 'LIDAR 뷰로 전환 (연결 재시작됨)'
+                        'action': 'lidar_connected',
+                        'message': 'LIDAR 뷰로 전환 (연결 시작됨)'
                     })
                 else:
-                    print("✅ LIDAR 스트림이 정상 작동 중")
+                    print("❌ LIDAR 스트림 시작 실패")
+                    lidar_view_mode = previous_mode  # 실패 시 상태 복원
+                    return jsonify({
+                        'success': False,
+                        'lidar_view_mode': previous_mode,
+                        'lidar_enabled': False,
+                        'action': 'connection_failed',
+                        'error': 'LIDAR 연결 시작 실패'
+                    })
+            else:
+                print("✅ LIDAR 스트림이 이미 실행 중")
+                return jsonify({
+                    'success': True,
+                    'lidar_view_mode': lidar_view_mode,
+                    'lidar_enabled': lidar_enabled,
+                    'action': 'already_connected',
+                    'message': 'LIDAR 뷰로 전환 (이미 연결됨)'
+                })
         else:
-            # 비디오 뷰로 전환 시에도 LIDAR 스트림 유지
-            print("📹 비디오 뷰로 전환 (LIDAR 백그라운드 유지)")
+            # 비디오 뷰로 전환 시 - 연결 완전 해제!
+            print("📹 비디오 뷰로 전환 - LIDAR 연결 완전 해제")
+            print("� LIDAR 스트림을 완전히 중지하고 리소스를 해제합니다")
             
-        return jsonify({
-            'success': True,
-            'lidar_view_mode': lidar_view_mode,
-            'lidar_enabled': lidar_enabled,
-            'message': f"{'LIDAR' if lidar_view_mode else '비디오'} 뷰로 전환되었습니다"
-        })
+            if lidar_enabled:
+                if stop_lidar_stream():
+                    print("✅ LIDAR 연결 완전 해제 성공")
+                    return jsonify({
+                        'success': True,
+                        'lidar_view_mode': lidar_view_mode,
+                        'lidar_enabled': False,
+                        'action': 'lidar_disconnected',
+                        'message': '비디오 뷰로 전환 (LIDAR 연결 해제됨)'
+                    })
+                else:
+                    print("⚠️ LIDAR 연결 해제 실패")
+                    return jsonify({
+                        'success': True,
+                        'lidar_view_mode': lidar_view_mode,
+                        'lidar_enabled': lidar_enabled,
+                        'action': 'disconnect_warning',
+                        'message': '비디오 뷰로 전환 (LIDAR 해제 실패 - 백그라운드에서 계속 실행)'
+                    })
+            else:
+                print("ℹ️ LIDAR가 이미 비활성화된 상태")
+                return jsonify({
+                    'success': True,
+                    'lidar_view_mode': lidar_view_mode,
+                    'lidar_enabled': False,
+                    'action': 'already_disconnected',
+                    'message': '비디오 뷰로 전환 (LIDAR 이미 해제됨)'
+                })
         
     except Exception as e:
         print(f"❌ 뷰 토글 오류: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+        # 오류 시 상태 복원
+        lidar_view_mode = previous_mode
+        return jsonify({
+            'success': False, 
+            'lidar_view_mode': previous_mode,
+            'action': 'error',
+            'error': str(e)
+        })
 
 # 🆕 LIDAR 제어 라우트들
 @app.route('/start_lidar', methods=['POST'])
