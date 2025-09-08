@@ -214,7 +214,80 @@
                 height: 240px;
             }
         }
+        
+        /* 🆕 LIDAR 3D 뷰어 스타일 */
+        #lidar-container {
+            position: relative;
+            border: 2px solid #28a745;
+            border-radius: 10px;
+            background: #000;
+            width: 640px;
+            height: 360px;
+            margin: 0 auto;
+        }
+        
+        #lidar-canvas {
+            border-radius: 8px;
+            display: block;
+        }
+        
+        /* 🆕 뷰 토글 버튼 스타일 */
+        #toggle-view-btn {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(40,167,69,0.3);
+        }
+        
+        #toggle-view-btn:hover {
+            background-color: #1e7e34;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(40,167,69,0.4);
+        }
+        
+        #toggle-view-btn.lidar-mode {
+            background-color: #007bff;
+        }
+        
+        #toggle-view-btn.lidar-mode:hover {
+            background-color: #0056b3;
+        }
+        
+        /* 🆕 LIDAR 상태 표시 */
+        #lidar-status {
+            text-align: center;
+            padding: 8px;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+        }
+        
+        #lidar-status.connected {
+            background-color: #d4edda;
+            border-color: #28a745;
+            color: #155724;
+        }
+        
+        #lidar-status.connecting {
+            background-color: #fff3cd;
+            border-color: #ffc107;
+            color: #856404;
+        }
+        
+        #lidar-status.error {
+            background-color: #f8d7da;
+            border-color: #dc3545;
+            color: #721c24;
+        }
     </style>
+    <!-- 🆕 Three.js 및 SocketIO 라이브러리 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.9.0/dist/nipplejs.min.js"></script>
 </head>
 <body>
@@ -275,7 +348,22 @@
             <!-- 비디오 스트림 섹션 -->
             <div class="video-section" id="video-section">
                 <h2>📹 실시간 비디오 스트림</h2>
-                <img src="{{ url_for('video_feed') }}" class="video-stream" width=640px height=360px />
+                <img src="{{ url_for('video_feed') }}" class="video-stream" id="video-stream" width=640px height=360px />
+                
+                <!-- 🆕 LIDAR 3D 뷰어 (숨김 상태로 시작) -->
+                <div id="lidar-container" style="display: none;">
+                    <canvas id="lidar-canvas" width="640" height="360"></canvas>
+                </div>
+                
+                <!-- 🆕 뷰 토글 버튼 (START CONTROL 후에 표시) -->
+                <div id="view-toggle-section" style="display: none; margin-top: 15px;">
+                    <button id="toggle-view-btn" class="btn btn-primary">
+                        🎯 LIDAR 뷰로 전환
+                    </button>
+                    <div id="lidar-status" style="margin-top: 10px; color: #666; font-size: 0.9em;">
+                        연결 상태: 대기 중
+                    </div>
+                </div>
             </div>
 
             <!-- 🆕 제어 사이드바 (START CONTROL 후에 표시) -->
@@ -341,6 +429,12 @@
     </div>
 
     <script>
+        // 🆕 LIDAR 관련 변수들
+        let lidarViewMode = false;
+        let lidarScene, lidarCamera, lidarRenderer, lidarPoints;
+        let socket;
+        
+        // 기존 변수들
         let joystick = null;
         let current = {x: 0, z: 0};
         let sending = false;
@@ -493,12 +587,16 @@
                         document.getElementById('video-section').classList.add('expanded');
                         document.getElementById('control-sidebar').classList.add('active');
                         
+                        // 🆕 LIDAR 토글 버튼 표시
+                        document.getElementById('view-toggle-section').style.display = 'block';
+                        
                         // 버튼 상태 변경
                         document.getElementById('slam-btn').style.display = 'none';
                         document.getElementById('exit-btn').style.display = 'inline-block';
                         
                         addLog('🚀 제어 시스템이 시작되었습니다.');
                         addLog('🔄 레이아웃이 가로 배치로 변경되었습니다.');
+                        addLog('🎯 LIDAR 뷰 토글 버튼이 활성화되었습니다.');
                         
                         // 🔧 조이스틱 생성 (레이아웃 변경 후)
                         if (!joystick) {
@@ -519,6 +617,14 @@
             // 🆕 레이아웃 복원 - 원래 세로 배치로
             document.getElementById('video-section').classList.remove('expanded');
             document.getElementById('control-sidebar').classList.remove('active');
+            
+            // 🆕 LIDAR 토글 버튼 숨기기
+            document.getElementById('view-toggle-section').style.display = 'none';
+            
+            // 🆕 LIDAR 뷰가 활성화된 경우 비디오로 복원
+            if (lidarViewMode) {
+                toggleView(); // 비디오 뷰로 전환
+            }
             
             // 버튼 상태 변경
             document.getElementById('slam-btn').style.display = 'inline-block';
@@ -791,10 +897,239 @@
             });
         }
 
+        // 🆕 LIDAR Three.js 초기화
+        function initLidarViewer() {
+            const canvas = document.getElementById('lidar-canvas');
+            
+            // Scene 생성
+            lidarScene = new THREE.Scene();
+            lidarScene.background = new THREE.Color(0x000000);
+            
+            // Camera 생성
+            lidarCamera = new THREE.PerspectiveCamera(75, 640/360, 0.1, 1000);
+            lidarCamera.position.set(0, 5, 10);
+            lidarCamera.lookAt(0, 0, 0);
+            
+            // Renderer 생성
+            lidarRenderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+            lidarRenderer.setSize(640, 360);
+            
+            // 좌표축 헬퍼 추가
+            const axesHelper = new THREE.AxesHelper(2);
+            lidarScene.add(axesHelper);
+            
+            // 그리드 헬퍼 추가
+            const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+            lidarScene.add(gridHelper);
+            
+            // 조명 추가
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+            lidarScene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 10, 5);
+            lidarScene.add(directionalLight);
+            
+            // 마우스 컨트롤 추가 (OrbitControls 대신 간단한 컨트롤)
+            addSimpleMouseControls();
+            
+            console.log("✅ LIDAR 3D 뷰어 초기화 완료");
+        }
+        
+        // 🆕 간단한 마우스 컨트롤
+        function addSimpleMouseControls() {
+            const canvas = document.getElementById('lidar-canvas');
+            let isMouseDown = false;
+            let mouseX = 0, mouseY = 0;
+            
+            canvas.addEventListener('mousedown', (event) => {
+                isMouseDown = true;
+                mouseX = event.clientX;
+                mouseY = event.clientY;
+            });
+            
+            canvas.addEventListener('mouseup', () => {
+                isMouseDown = false;
+            });
+            
+            canvas.addEventListener('mousemove', (event) => {
+                if (!isMouseDown) return;
+                
+                const deltaX = event.clientX - mouseX;
+                const deltaY = event.clientY - mouseY;
+                
+                // 카메라 회전
+                const spherical = new THREE.Spherical();
+                spherical.setFromVector3(lidarCamera.position);
+                spherical.theta -= deltaX * 0.01;
+                spherical.phi += deltaY * 0.01;
+                spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi));
+                
+                lidarCamera.position.setFromSpherical(spherical);
+                lidarCamera.lookAt(0, 0, 0);
+                
+                mouseX = event.clientX;
+                mouseY = event.clientY;
+            });
+            
+            // 휠 줌
+            canvas.addEventListener('wheel', (event) => {
+                const distance = lidarCamera.position.length();
+                const newDistance = Math.max(2, Math.min(50, distance + event.deltaY * 0.01));
+                lidarCamera.position.normalize().multiplyScalar(newDistance);
+                event.preventDefault();
+            });
+        }
+        
+        // 🆕 LIDAR 데이터 업데이트
+        function updateLidarPoints(pointsData, scalars) {
+            if (!lidarScene) return;
+            
+            // 기존 포인트 제거
+            if (lidarPoints) {
+                lidarScene.remove(lidarPoints);
+            }
+            
+            if (!pointsData || pointsData.length === 0) return;
+            
+            // 포인트 지오메트리 생성
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(pointsData.flat());
+            const colors = new Float32Array(pointsData.length * 3);
+            
+            // 거리 기반 색상 계산
+            for (let i = 0; i < pointsData.length; i++) {
+                const scalar = scalars[i] || 0;
+                const normalizedScalar = Math.min(1, scalar / 10); // 10m를 최대값으로 정규화
+                
+                // 거리에 따른 색상 (파란색 -> 초록색 -> 빨간색)
+                colors[i * 3] = normalizedScalar;     // R
+                colors[i * 3 + 1] = 1 - normalizedScalar; // G
+                colors[i * 3 + 2] = 0.2;              // B
+            }
+            
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            
+            // 포인트 머티리얼 생성
+            const material = new THREE.PointsMaterial({
+                size: 0.05,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            // 포인트 메시 생성
+            lidarPoints = new THREE.Points(geometry, material);
+            lidarScene.add(lidarPoints);
+            
+            console.log(`📊 LIDAR 포인트 업데이트: ${pointsData.length}개`);
+        }
+        
+        // 🆕 LIDAR 렌더링 루프
+        function animateLidar() {
+            if (lidarViewMode && lidarRenderer && lidarScene && lidarCamera) {
+                lidarRenderer.render(lidarScene, lidarCamera);
+            }
+            requestAnimationFrame(animateLidar);
+        }
+        
+        // 🆕 뷰 토글 함수
+        function toggleView() {
+            lidarViewMode = !lidarViewMode;
+            
+            const videoStream = document.getElementById('video-stream');
+            const lidarContainer = document.getElementById('lidar-container');
+            const toggleBtn = document.getElementById('toggle-view-btn');
+            
+            if (lidarViewMode) {
+                // LIDAR 뷰로 전환
+                videoStream.style.display = 'none';
+                lidarContainer.style.display = 'block';
+                toggleBtn.textContent = '📹 비디오로 전환';
+                toggleBtn.classList.add('lidar-mode');
+                
+                // LIDAR 스트림 시작
+                fetch('/toggle_lidar_view', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('LIDAR 뷰 전환:', data);
+                        updateLidarStatus('connected', 'LIDAR 연결됨');
+                    })
+                    .catch(error => {
+                        console.error('LIDAR 전환 오류:', error);
+                        updateLidarStatus('error', '연결 오류');
+                    });
+                    
+            } else {
+                // 비디오 뷰로 전환
+                videoStream.style.display = 'block';
+                lidarContainer.style.display = 'none';
+                toggleBtn.textContent = '🎯 LIDAR 뷰로 전환';
+                toggleBtn.classList.remove('lidar-mode');
+                
+                // 비디오 뷰로 전환
+                fetch('/toggle_lidar_view', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('비디오 뷰 전환:', data);
+                        updateLidarStatus('connecting', '대기 중');
+                    });
+            }
+        }
+        
+        // 🆕 LIDAR 상태 업데이트
+        function updateLidarStatus(status, message) {
+            const statusElement = document.getElementById('lidar-status');
+            statusElement.className = '';
+            statusElement.classList.add(status);
+            statusElement.textContent = `연결 상태: ${message}`;
+        }
+        
+        // 🆕 SocketIO 초기화
+        function initSocketIO() {
+            socket = io();
+            
+            socket.on('connect', function() {
+                console.log('✅ SocketIO 연결됨');
+                updateLidarStatus('connecting', '서버 연결됨');
+            });
+            
+            socket.on('disconnect', function() {
+                console.log('❌ SocketIO 연결 해제됨');
+                updateLidarStatus('error', '서버 연결 해제됨');
+            });
+            
+            socket.on('lidar_data', function(data) {
+                if (data.points && data.scalars) {
+                    updateLidarPoints(data.points, data.scalars);
+                    updateLidarStatus('connected', `${data.points.length}개 포인트`);
+                    
+                    // 🔧 백그라운드에서도 처리하되, LIDAR 뷰일 때만 화면 업데이트
+                    if (lidarViewMode) {
+                        // LIDAR 뷰 모드일 때만 시각적 업데이트
+                        console.log(`📊 LIDAR 포인트 업데이트: ${data.points.length}개`);
+                    }
+                }
+            });
+            
+            socket.on('status', function(data) {
+                console.log('서버 상태:', data.message);
+            });
+        }
+        
         // 페이지 로드 시 초기화
         window.onload = function() {
             addLog('🌟 시스템이 준비되었습니다.');
             addLog('📋 START CONTROL을 눌러 시작하세요.');
+            
+            // 🆕 LIDAR 초기화
+            initLidarViewer();
+            initSocketIO();
+            animateLidar(); // 렌더링 루프 시작
+            
+            // 🆕 토글 버튼 이벤트 연결
+            document.getElementById('toggle-view-btn').onclick = toggleView;
             
             // 🆕 페이지 로드 시 YOLO 상태 초기화
             updateYoloControlStatus(true);

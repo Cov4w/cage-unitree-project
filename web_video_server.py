@@ -2,6 +2,7 @@ import cv2
 import time
 import numpy as np
 from flask import Flask, Response, render_template, request, jsonify
+from flask_socketio import SocketIO, emit
 from multiprocessing import Queue
 from webrtc_producer import start_webrtc, send_command, ensure_normal_mode_once
 import threading
@@ -10,6 +11,8 @@ import logging
 import json
 import os
 from datetime import datetime
+import asyncio
+import traceback
 
 # 🔧 ArUco 신원 시스템 import (오류 처리 추가)
 try:
@@ -23,6 +26,7 @@ except ImportError as e:
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__, template_folder='templates')
+socketio = SocketIO(app, cors_allowed_origins="*")
 frame_queue = Queue(maxsize=10)
 command_queue = Queue(maxsize=10)
 
@@ -59,6 +63,19 @@ FIRE_ALERT_INTERVAL = 5.0
 
 # 🆕 YOLO 활성화 상태 변수
 yolo_active = True
+
+# 🆕 LIDAR 모드 전환 변수들
+lidar_view_mode = False  # False: 비디오 모드, True: LIDAR 모드
+lidar_enabled = False
+lidar_task = None
+lidar_connection = None
+message_count = 0
+
+# 🆕 LIDAR 상수들 (plot_lidar_stream.py와 동일)
+ROTATE_X_ANGLE = np.pi / 2  # 90 degrees
+ROTATE_Z_ANGLE = np.pi      # 180 degrees
+minYValue = 0
+maxYValue = 100
 
 # 🆕 ArUco 스캔 관련 변수들
 aruco_scan_mode = False
@@ -901,30 +918,470 @@ def get_robot_current_state():
         print(f"⚠️ 로봇 상태 조회 실패: {e}")
         return 'unknown'
 
-if __name__ == "__main__":
-    print("🚀 Unitree 웹 비디오 서버 시작!")
-    
-    if ARUCO_AVAILABLE and aruco_identity_system:
-        print(f"🔖 ArUco 신원 확인 시스템 준비 완료")
-    else:
-        print(f"⚠️ ArUco 신원 확인 시스템 비활성화됨")
-    
-    if yolo_model:
-        print(f"🔥 화재 감지 시스템 활성화")
-    else:
-        print(f"⚠️ YOLO 모델 로드 실패 - 화재 감지 비활성화")
-    
-    print(f"🕹️ 조이스틱 제어 시스템 준비")
-    app.run(host='0.0.0.0', port=5010, debug=False)
+# 🆕 LIDAR 관련 함수들 추가
 
+def rotate_points(points, x_angle, z_angle):
+    """Rotate points around the x and z axes by given angles."""
+    rotation_matrix_x = np.array([
+        [1, 0, 0],
+        [0, np.cos(x_angle), -np.sin(x_angle)],
+        [0, np.sin(x_angle), np.cos(x_angle)]
+    ])
+    
+    rotation_matrix_z = np.array([
+        [np.cos(z_angle), -np.sin(z_angle), 0],
+        [np.sin(z_angle), np.cos(z_angle), 0],
+        [0, 0, 1]
+    ])
+    
+    points = points @ rotation_matrix_x.T
+    points = points @ rotation_matrix_z.T
+    return points
 
-'''
-@misc{lin2015microsoft,
-      title={Microsoft COCO: Common Objects in Context},
-      author={Tsung-Yi Lin and Michael Maire and Serge Belongie and Lubomir Bourdev and Ross Girshick and James Hays and Pietro Perona and Deva Ramanan and C. Lawrence Zitnick and Piotr Dollár},
-      year={2015},
-      eprint={1405.0312},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
-}
-'''
+async def lidar_callback_task(message):
+    """Task to process incoming LIDAR data - plot_lidar_stream.py와 거의 동일"""
+    global message_count, minYValue, maxYValue
+    
+    try:
+        # 🔧 LIDAR 활성화 상태만 체크 (뷰 모드와 무관하게 데이터 처리)
+        if not lidar_enabled:
+            return
+            
+        # 🔧 첫 번째 메시지 수신 시 알림
+        if message_count == 0:
+            print("🎉 첫 번째 LIDAR 메시지 수신!")
+            
+        # 🔧 plot_lidar_stream.py와 동일한 skip 로직 (현재는 모든 메시지 처리)
+        if message_count % 1 != 0:  # args.skip_mod 대신 1 사용
+            message_count += 1
+            return
+
+        # 🔧 데이터 추출 (plot_lidar_stream.py와 동일)
+        positions = message["data"]["data"].get("positions", [])
+        origin = message["data"].get("origin", [])
+        
+        # 🔧 positions가 numpy 배열인지 확인하고 안전하게 처리
+        positions_length = 0
+        has_positions = False
+        
+        if positions is not None:
+            if hasattr(positions, '__len__'):
+                positions_length = len(positions)
+                has_positions = positions_length > 0
+            else:
+                has_positions = False
+        
+        print(f"🔍 LIDAR 데이터 구조 확인: positions 길이={positions_length}, origin={origin}")
+        
+        if not has_positions:
+            message_count += 1
+            print(f"⚠️ 빈 LIDAR 데이터 (메시지 #{message_count})")
+            return
+            
+        # 🔧 포인트 변환 (plot_lidar_stream.py와 동일)
+        points = np.array([positions[i:i+3] for i in range(0, len(positions), 3)], dtype=np.float32)
+        total_points = len(points)
+        unique_points = np.unique(points, axis=0)
+        
+        if len(unique_points) == 0:
+            message_count += 1
+            print(f"⚠️ unique_points가 0개 (메시지 #{message_count})")
+            return
+
+        # 🔧 회전 및 필터링 (plot_lidar_stream.py와 동일)
+        rotated_points = rotate_points(unique_points, ROTATE_X_ANGLE, ROTATE_Z_ANGLE)
+        filtered_points = rotated_points[(rotated_points[:, 1] >= minYValue) & (rotated_points[:, 1] <= maxYValue)]
+        
+        if len(filtered_points) == 0:
+            message_count += 1
+            print(f"⚠️ filtered_points가 0개 (메시지 #{message_count})")
+            return
+
+        # 🔧 중심점 계산 (plot_lidar_stream.py와 동일)
+        center_x = float(np.mean(filtered_points[:, 0]))
+        center_y = float(np.mean(filtered_points[:, 1]))
+        center_z = float(np.mean(filtered_points[:, 2]))
+
+        # 🔧 중심점으로 오프셋 (plot_lidar_stream.py와 동일)
+        offset_points = filtered_points - np.array([center_x, center_y, center_z])
+
+        # 🔧 로그 메시지 (plot_lidar_stream.py와 동일)
+        message_count += 1
+        print(f"📡 LIDAR Message {message_count}: Total points={total_points}, Unique points={len(unique_points)}, Filtered={len(filtered_points)}")
+
+        # 🔧 거리 기반 색상 스칼라 (plot_lidar_stream.py와 동일)
+        scalars = np.linalg.norm(offset_points, axis=1)
+
+        # 🔧 SocketIO로 LIDAR 데이터 전송 (plot_lidar_stream.py와 동일)
+        socketio.emit("lidar_data", {
+            "points": offset_points.tolist(),
+            "scalars": scalars.tolist(),
+            "center": {"x": center_x, "y": center_y, "z": center_z}
+        })
+        print(f"📤 SocketIO로 {len(offset_points)}개 포인트 전송됨")
+
+    except Exception as e:
+        print(f"❌ LIDAR 콜백 오류: {e}")
+        print(f"🔍 상세 오류: {traceback.format_exc()}")
+
+async def lidar_webrtc_connection():
+    """LIDAR WebRTC 연결 및 데이터 처리 - 자동 재연결 기능 포함"""
+    global lidar_connection, message_count
+    
+    max_retries = 3
+    retry_delay = 5
+    last_message_count = 0
+    connection_health_check_interval = 10  # 10초마다 연결 상태 확인
+    
+    while lidar_enabled:
+        try:
+            # � 기존 연결 재사용 시도
+            from webrtc_producer import _conn_holder
+            
+            conn = None
+            use_existing_connection = False
+            
+            if _conn_holder and 'conn' in _conn_holder and _conn_holder['conn']:
+                potential_conn = _conn_holder['conn']
+                print("🔗 기존 WebRTC 연결 상태 확인 중...")
+                
+                # 🆕 연결 상태 확인
+                connection_state = 'unknown'
+                if hasattr(potential_conn, '_peer_connection'):
+                    connection_state = getattr(potential_conn._peer_connection, 'connectionState', 'unknown')
+                    print(f"📡 WebRTC 연결 상태: {connection_state}")
+                
+                if connection_state in ['connected', 'connecting'] and hasattr(potential_conn, 'datachannel') and potential_conn.datachannel:
+                    print("✅ 기존 WebRTC 연결을 LIDAR용으로 재사용")
+                    conn = potential_conn
+                    use_existing_connection = True
+                else:
+                    print(f"⚠️ 기존 연결 상태 불량 ({connection_state}) - 새 연결 생성 필요")
+            
+            # 새 연결 생성 (기존 연결이 없거나 상태가 불량한 경우)
+            if not use_existing_connection:
+                print("🔄 새로운 LIDAR 전용 WebRTC 연결 생성 중...")
+                
+                from go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
+                from config.settings import SERIAL_NUMBER, UNITREE_USERNAME, UNITREE_PASSWORD
+                
+                conn = Go2WebRTCConnection(
+                    WebRTCConnectionMethod.Remote,
+                    serialNumber=SERIAL_NUMBER,
+                    username=UNITREE_USERNAME,
+                    password=UNITREE_PASSWORD
+                )
+                
+                print("� LIDAR WebRTC 연결 시도...")
+                await conn.connect()
+                print("✅ LIDAR WebRTC 연결 성공")
+            
+            # 트래픽 저장 모드 비활성화
+            print("🔄 트래픽 저장 모드 비활성화 시도...")
+            try:
+                if asyncio.iscoroutinefunction(conn.datachannel.disableTrafficSaving):
+                    await asyncio.wait_for(
+                        conn.datachannel.disableTrafficSaving(True),
+                        timeout=5.0  # 5초 타임아웃
+                    )
+                    print("✅ 트래픽 저장 모드 비활성화됨 (비동기)")
+                else:
+                    conn.datachannel.disableTrafficSaving(True)
+                    print("✅ 트래픽 저장 모드 비활성화됨 (동기)")
+            except asyncio.TimeoutError:
+                print("⚠️ 트래픽 저장 모드 설정 타임아웃 - 계속 진행")
+            except Exception as traffic_err:
+                print(f"⚠️ 트래픽 저장 모드 설정 건너뜀: {traffic_err}")
+            
+            # LIDAR 센서 ON 명령
+            print("🔄 LIDAR 센서 활성화 시도...")
+            conn.datachannel.pub_sub.publish_without_callback("rt/utlidar/switch", "on")
+            print("✅ LIDAR 센서 'ON' 명령 전송됨")
+            
+            # 센서 초기화 대기
+            print("⏳ LIDAR 센서 초기화 대기 중...")
+            await asyncio.sleep(3)
+            
+            # LIDAR 데이터 구독
+            print("🔄 LIDAR 데이터 구독 시도...")
+            conn.datachannel.pub_sub.subscribe(
+                "rt/utlidar/voxel_map_compressed",
+                lambda message: asyncio.create_task(lidar_callback_task(message))
+            )
+            print("📡 LIDAR 데이터 구독 시작")
+            print(f"📊 구독 토픽: rt/utlidar/voxel_map_compressed")
+            
+            lidar_connection = conn
+            last_message_count = message_count
+            
+            # 🆕 연결 상태 모니터링 루프
+            print("🔄 LIDAR 연결 상태 모니터링 시작...")
+            health_check_counter = 0
+            
+            while lidar_enabled:
+                await asyncio.sleep(2)
+                health_check_counter += 1
+                
+                # 주기적으로 연결 상태 확인
+                if health_check_counter >= (connection_health_check_interval // 2):
+                    health_check_counter = 0
+                    
+                    # 메시지 수신 확인
+                    if message_count == last_message_count:
+                        print(f"⚠️ LIDAR 데이터 수신 중단 감지 (메시지 카운트: {message_count})")
+                        print("🔄 연결 재시작 중...")
+                        break
+                    else:
+                        print(f"✅ LIDAR 데이터 정상 수신 중 (메시지: {message_count})")
+                        last_message_count = message_count
+                    
+                    # WebRTC 연결 상태 확인
+                    if hasattr(conn, '_peer_connection'):
+                        connection_state = getattr(conn._peer_connection, 'connectionState', 'unknown')
+                        if connection_state in ['closed', 'failed', 'disconnected']:
+                            print(f"❌ WebRTC 연결 끊어짐 감지: {connection_state}")
+                            print("🔄 연결 재시작 중...")
+                            break
+            
+            # while 루프가 정상 종료된 경우 (lidar_enabled가 False)
+            if not lidar_enabled:
+                print("🛑 LIDAR 모니터링 종료")
+                break
+                
+        except Exception as e:
+            print(f"❌ LIDAR WebRTC 연결 오류: {e}")
+            print(f"🔍 상세 오류: {traceback.format_exc()}")
+            
+            # 연결 실패 시 재시도 대기
+            if lidar_enabled:
+                print(f"⏳ {retry_delay}초 후 LIDAR 연결 재시도...")
+                await asyncio.sleep(retry_delay)
+                continue
+            else:
+                break
+    
+    print("🏁 LIDAR WebRTC 연결 함수 종료")
+
+def start_lidar_stream():
+    """LIDAR 스트림 시작"""
+    global lidar_enabled, lidar_task
+    
+    if lidar_enabled:
+        print("⚠️ LIDAR 스트림이 이미 실행 중입니다")
+        return False
+    
+    lidar_enabled = True
+    
+    def run_lidar():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(lidar_webrtc_connection())
+    
+    lidar_task = threading.Thread(target=run_lidar, daemon=True)
+    lidar_task.start()
+    print("🚀 LIDAR 스트림 시작됨")
+    return True
+
+def stop_lidar_stream():
+    """LIDAR 스트림 중지"""
+    global lidar_enabled, lidar_connection
+    
+    if not lidar_enabled:
+        return False
+        
+    lidar_enabled = False
+    
+    try:
+        if lidar_connection and hasattr(lidar_connection, 'datachannel'):
+            lidar_connection.datachannel.pub_sub.publish_without_callback("rt/utlidar/switch", "off")
+            print("📡 LIDAR 센서 비활성화됨")
+    except Exception as e:
+        print(f"⚠️ LIDAR 센서 비활성화 오류: {e}")
+    
+    print("🛑 LIDAR 스트림 중지됨")
+    return True
+
+# 🔄 LIDAR 뷰 토글 라우트
+@app.route('/toggle_lidar_view', methods=['POST'])
+def toggle_lidar_view():
+    """비디오와 LIDAR 뷰 간 전환 - 자동 재연결 기능 포함"""
+    global lidar_view_mode
+    
+    try:
+        lidar_view_mode = not lidar_view_mode
+        print(f"🔄 뷰 모드 전환: {'LIDAR' if lidar_view_mode else '비디오'}")
+        
+        if lidar_view_mode:
+            # LIDAR 뷰로 전환 시 LIDAR 스트림 시작/재시작
+            if not lidar_enabled:
+                print("🚀 LIDAR 뷰 전환: LIDAR 스트림 시작")
+                start_lidar_stream()
+            else:
+                # 이미 실행 중이지만 연결 상태 확인
+                print("🔍 LIDAR 스트림 상태 확인 중...")
+                
+                # 최근 메시지 수신 여부 확인
+                global message_count
+                old_count = message_count
+                import time
+                time.sleep(2)
+                
+                if message_count == old_count:
+                    print("⚠️ LIDAR 데이터 수신 중단 감지 - 재시작 중...")
+                    stop_lidar_stream()
+                    time.sleep(1)
+                    start_lidar_stream()
+                    return jsonify({
+                        'success': True,
+                        'lidar_view_mode': lidar_view_mode,
+                        'lidar_enabled': True,
+                        'message': 'LIDAR 뷰로 전환 (연결 재시작됨)'
+                    })
+                else:
+                    print("✅ LIDAR 스트림이 정상 작동 중")
+        else:
+            # 비디오 뷰로 전환 시에도 LIDAR 스트림 유지
+            print("📹 비디오 뷰로 전환 (LIDAR 백그라운드 유지)")
+            
+        return jsonify({
+            'success': True,
+            'lidar_view_mode': lidar_view_mode,
+            'lidar_enabled': lidar_enabled,
+            'message': f"{'LIDAR' if lidar_view_mode else '비디오'} 뷰로 전환되었습니다"
+        })
+        
+    except Exception as e:
+        print(f"❌ 뷰 토글 오류: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+# 🆕 LIDAR 제어 라우트들
+@app.route('/start_lidar', methods=['POST'])
+def start_lidar():
+    """LIDAR 스트림 시작"""
+    try:
+        print("🚀 LIDAR 스트림 수동 시작 요청")
+        if start_lidar_stream():
+            return jsonify({'success': True, 'message': 'LIDAR 스트림이 시작되었습니다'})
+        else:
+            # 이미 실행 중이라면 상태 확인 후 재시작
+            print("⚠️ LIDAR 스트림이 이미 실행 중 - 상태 확인 중...")
+            global lidar_enabled, message_count
+            
+            # 메시지 카운트가 증가하지 않으면 재시작
+            old_count = message_count
+            import time
+            time.sleep(3)
+            
+            if message_count == old_count:
+                print("🔄 LIDAR 데이터 수신이 중단됨 - 재시작 중...")
+                stop_lidar_stream()
+                time.sleep(1)
+                start_lidar_stream()
+                return jsonify({'success': True, 'message': 'LIDAR 스트림이 재시작되었습니다'})
+            else:
+                return jsonify({'success': True, 'message': 'LIDAR 스트림이 정상 작동 중입니다'})
+    except Exception as e:
+        print(f"❌ LIDAR 시작 오류: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/stop_lidar', methods=['POST'])
+def stop_lidar():
+    """LIDAR 스트림 중지"""
+    try:
+        if stop_lidar_stream():
+            return jsonify({'success': True, 'message': 'LIDAR 스트림이 중지되었습니다'})
+        else:
+            return jsonify({'success': False, 'message': 'LIDAR 스트림이 실행되지 않았습니다'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/lidar_status', methods=['GET'])
+def lidar_status():
+    """LIDAR 상태 확인"""
+    global message_count, lidar_connection
+    
+    # 연결 상태 확인
+    connection_state = 'unknown'
+    if lidar_connection and hasattr(lidar_connection, '_peer_connection'):
+        connection_state = getattr(lidar_connection._peer_connection, 'connectionState', 'unknown')
+    
+    return jsonify({
+        'lidar_enabled': lidar_enabled,
+        'lidar_view_mode': lidar_view_mode,
+        'message_count': message_count,
+        'connection_state': connection_state,
+        'connection_healthy': connection_state in ['connected', 'connecting']
+    })
+
+@app.route('/restart_lidar', methods=['POST'])
+def restart_lidar():
+    """LIDAR 연결 강제 재시작"""
+    try:
+        print("🔄 LIDAR 연결 강제 재시작 요청")
+        
+        # 기존 연결 중지
+        if lidar_enabled:
+            print("🛑 기존 LIDAR 스트림 중지 중...")
+            stop_lidar_stream()
+            import time
+            time.sleep(2)  # 완전히 중지되도록 대기
+        
+        # 새로운 연결 시작
+        print("🚀 새로운 LIDAR 스트림 시작...")
+        if start_lidar_stream():
+            return jsonify({
+                'success': True, 
+                'message': 'LIDAR 연결이 재시작되었습니다',
+                'restart_time': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False, 
+                'message': 'LIDAR 재시작 실패'
+            })
+            
+    except Exception as e:
+        print(f"❌ LIDAR 재시작 오류: {e}")
+        return jsonify({
+            'success': False, 
+            'error': str(e)
+        })
+
+# 🆕 SocketIO 이벤트 핸들러들
+@socketio.on('connect')
+def handle_connect():
+    print('🔌 클라이언트 연결됨')
+    emit('status', {'message': '서버에 연결되었습니다'})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('🔌 클라이언트 연결 해제됨')
+
+@socketio.on('check_args')
+def handle_check_args():
+    """LIDAR 뷰어 설정 전송"""
+    typeFlag = 0b0101  # point cloud + iso camera
+    typeFlagBinary = format(typeFlag, "04b")
+    emit("check_args_ack", {"type": typeFlagBinary})
+
+if __name__ == '__main__':
+    print("🚀 웹 비디오 서버 시작")
+    print("📊 LIDAR 3D 시각화 포함")
+    print("🎮 조이스틱 제어 활성화")
+    print("🔥 YOLO 화재/인물 탐지 활성화")
+    if ARUCO_AVAILABLE:
+        print("🆔 ArUco 신원 인증 활성화")
+    else:
+        print("⚠️ ArUco 신원 인증 비활성화")
+    
+    try:
+        # SocketIO 서버 실행 (기존 Flask 대신)
+        socketio.run(app, host='0.0.0.0', port=5010, debug=False, allow_unsafe_werkzeug=True)
+    except KeyboardInterrupt:
+        print("\n🛑 서버 종료")
+        if lidar_enabled:
+            stop_lidar_stream()
+    except Exception as e:
+        print(f"❌ 서버 실행 오류: {e}")
+        if lidar_enabled:
+            stop_lidar_stream()
