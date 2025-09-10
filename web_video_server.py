@@ -52,11 +52,12 @@ if ARUCO_AVAILABLE:
 # WebRTC 프레임 수신 시작
 start_webrtc(frame_queue, command_queue)
 
-# 🔥 Fire 감지 추적 변수들
+# 🔥 Fire 감지 추적 변수들에 alert_count 추가
 fire_detection_start_time = None
 fire_continuous_detection = False
 fire_last_alert_time = None
 fire_detection_active = True
+fire_alert_count = 0  # 🆕 알림 카운터 추가
 FIRE_DETECTION_THRESHOLD = 5.0
 FIRE_CONFIDENCE_THRESHOLD = 0.5
 FIRE_ALERT_INTERVAL = 5.0
@@ -370,8 +371,8 @@ def process_aruco_identity_markers(img):
     
     return detected_markers
 
-def save_fire_alert(is_repeat=False):
-    """Fire 알림 정보를 파일에 저장 (Discord 봇이 읽을 수 있도록)"""
+def save_fire_alert(is_repeat=False, alert_count=1):
+    """Fire 알림 정보를 파일에 저장 (alert_count 직접 전달) - 버그 수정"""
     current_time = time.time()
     detection_duration = current_time - fire_detection_start_time if fire_detection_start_time else 0
     
@@ -382,7 +383,7 @@ def save_fire_alert(is_repeat=False):
         'confidence': 'high',
         'location': 'unitree_camera',
         'is_repeat': is_repeat,
-        'alert_count': int(detection_duration // FIRE_ALERT_INTERVAL) + 1,
+        'alert_count': alert_count,  # 🆕 직접 전달받은 카운트 사용
         'message': f'🚨 화재가 {detection_duration:.1f}초간 연속 감지 중입니다!' if is_repeat else '🚨 화재가 5초 이상 연속 감지되었습니다!'
     }
     
@@ -391,16 +392,16 @@ def save_fire_alert(is_repeat=False):
             json.dump(alert_data, f)
         
         if is_repeat:
-            print(f"🚨 화재 반복 알림 #{alert_data['alert_count']} 저장됨 ({detection_duration:.1f}초)")
+            print(f"🚨 화재 반복 알림 #{alert_count} 저장됨 ({detection_duration:.1f}초)")
         else:
-            print("🚨 화재 첫 알림 정보 저장됨 - Discord 봇이 처리할 예정")
+            print(f"🚨 화재 첫 알림 저장됨 - Discord 봇이 처리할 예정")
             
     except Exception as e:
         print(f"❌ 알림 저장 실패: {e}")
 
 def check_fire_detection(current_boxes):
-    """Fire 감지 상태 확인 및 알림 처리 (반복 알림 포함)"""
-    global fire_detection_start_time, fire_continuous_detection, fire_last_alert_time
+    """Fire 감지 상태 확인 및 알림 처리 (alert_count 버그 수정)"""
+    global fire_detection_start_time, fire_continuous_detection, fire_last_alert_time, fire_alert_count
     
     # 현재 프레임에서 고신뢰도 Fire 탐지 여부 확인
     high_confidence_fire = False
@@ -417,33 +418,40 @@ def check_fire_detection(current_boxes):
     
     if high_confidence_fire:
         if not fire_continuous_detection:
+            # 🔧 새로운 화재 감지 시작
             fire_detection_start_time = current_time
             fire_continuous_detection = True
             fire_last_alert_time = None
+            fire_alert_count = 0  # 🆕 카운터 초기화
             print(f"🔥 Fire 감지 시작! (신뢰도 {max_confidence:.2f})")
         
         detection_duration = current_time - fire_detection_start_time
         
         if detection_duration >= FIRE_DETECTION_THRESHOLD and fire_last_alert_time is None:
+            # 🔧 첫 번째 알림 (5초 후)
+            fire_alert_count = 1  # 🆕 첫 번째 알림
             print(f"🚨 화재 첫 알림! ({detection_duration:.1f}초 연속 감지)")
-            save_fire_alert(is_repeat=False)
+            save_fire_alert(is_repeat=False, alert_count=fire_alert_count)
             fire_last_alert_time = current_time
             
         elif (fire_last_alert_time is not None and 
               current_time - fire_last_alert_time >= FIRE_ALERT_INTERVAL):
-            print(f"🚨 화재 반복 알림! (총 {detection_duration:.1f}초 연속 감지)")
-            save_fire_alert(is_repeat=True)
+            # 🔧 반복 알림 (5초마다)
+            fire_alert_count += 1  # 🆕 카운터 증가
+            print(f"🚨 화재 반복 알림 #{fire_alert_count}! (총 {detection_duration:.1f}초 연속 감지)")
+            save_fire_alert(is_repeat=True, alert_count=fire_alert_count)
             fire_last_alert_time = current_time
             
     else:
         # Fire 감지 안됨 - 상태 초기화
         if fire_continuous_detection:
             detection_duration = current_time - fire_detection_start_time
-            print(f"🔥 Fire 감지 종료 (총 {detection_duration:.1f}초 감지됨)")
+            print(f"🔥 Fire 감지 종료 (총 {detection_duration:.1f}초 감지됨, 총 {fire_alert_count}회 알림)")
             
         fire_continuous_detection = False
         fire_detection_start_time = None
         fire_last_alert_time = None
+        fire_alert_count = 0  # 🆕 카운터 초기화
 
 # generate() 함수에서 YOLO 로직 완전 복원
 def generate():
@@ -545,7 +553,7 @@ def generate():
                         if confidence >= FIRE_CONFIDENCE_THRESHOLD and fire_continuous_detection:
                             if int(time.time() * 2) % 2:  # 0.5초마다 깜빡임
                                 color = (0, 255, 255)  # 노란색으로 깜빡임
-                            display_text = f"🚨 FIRE {confidence:.2f} 🚨"
+                            display_text = f" FIRE {confidence:.2f} "
                             
                     elif label == "person":
                         color = (0, 255, 0)  # 초록색
